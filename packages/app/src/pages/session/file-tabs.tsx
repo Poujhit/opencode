@@ -1,4 +1,4 @@
-import { createEffect, createMemo, Match, on, onCleanup, Switch } from "solid-js"
+import { createEffect, createMemo, createSignal, Match, on, onCleanup, Switch } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
 import { useParams } from "@solidjs/router"
@@ -12,12 +12,14 @@ import { IconButton } from "@opencode-ai/ui/icon-button"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import { showToast } from "@opencode-ai/ui/toast"
+import { Button } from "@opencode-ai/ui/button"
 import { useLayout } from "@/context/layout"
 import { selectionFromLines, useFile, type FileSelection, type SelectedLineRange } from "@/context/file"
 import { useComments } from "@/context/comments"
 import { useLanguage } from "@/context/language"
 import { usePrompt } from "@/context/prompt"
 import { getSessionHandoff } from "@/pages/session/handoff"
+import { EditableFile } from "@/components/editable-file"
 
 function FileCommentMenu(props: {
   moreLabel: string
@@ -52,7 +54,11 @@ function FileCommentMenu(props: {
   )
 }
 
-export function FileTabContent(props: { tab: string }) {
+export function FileTabContent(props: {
+  tab: string
+  editedContents: Record<string, string>
+  setEditedContents: (fn: (prev: Record<string, string>) => Record<string, string>) => void
+}) {
   const params = useParams()
   const layout = useLayout()
   const file = useFile()
@@ -64,6 +70,9 @@ export function FileTabContent(props: { tab: string }) {
   const sessionKey = createMemo(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
   const tabs = createMemo(() => layout.tabs(sessionKey))
   const view = createMemo(() => layout.view(sessionKey))
+
+  // Clear all edited contents when project directory changes
+  createEffect(on(() => params.dir, () => { props.setEditedContents(() => ({})) }, { defer: true }))
 
   let scroll: HTMLDivElement | undefined
   let scrollFrame: number | undefined
@@ -446,24 +455,129 @@ export function FileTabContent(props: { tab: string }) {
     </div>
   )
 
+  const [editMode, setEditMode] = createSignal(true)
+  const [editSelection, setEditSelection] = createSignal<{ startLine: number; endLine: number } | null>(null)
+
+  const getEditedContent = () => {
+    const p = path()
+    if (!p) return undefined
+    return props.editedContents[p]
+  }
+
+  const setEditedContent = (content: string) => {
+    const p = path()
+    if (!p) return
+    props.setEditedContents((prev) => ({ ...prev, [p]: content }))
+  }
+
+  const clearEditedContent = () => {
+    const p = path()
+    if (!p) return
+    props.setEditedContents((prev) => {
+      const next = { ...prev }
+      delete next[p]
+      return next
+    })
+  }
+
+  // Cmd+H: add highlighted lines to prompt context
+  const addSelectionToPrompt = () => {
+    const p = path()
+    if (!p) return
+
+    // Get selection from edit mode or view mode
+    const sel = editMode()
+      ? editSelection()
+      : (() => {
+        const a = activeSelection()
+        if (!a) return null
+        return { startLine: a.start, endLine: a.end }
+      })()
+
+    if (!sel) {
+      showToast({ variant: "error", title: "No lines selected", description: "Select some lines first" })
+      return
+    }
+
+    const selection = selectionFromLines({ start: sel.startLine, end: sel.endLine })
+    const source = contents()
+    const preview = selectionPreview(source, selection)
+
+    prompt.context.add({
+      type: "file",
+      path: p,
+      selection,
+      preview,
+    })
+
+    showToast({
+      variant: "success",
+      title: `Added lines ${sel.startLine}–${sel.endLine} to prompt`,
+      description: p,
+    })
+  }
+
+  // Cmd+H keyboard shortcut
+  createEffect(() => {
+    if (typeof window === "undefined") return
+    const onKeyDown = (event: KeyboardEvent) => {
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "h") return
+      event.preventDefault()
+      event.stopPropagation()
+      addSelectionToPrompt()
+    }
+    window.addEventListener("keydown", onKeyDown, { capture: true })
+    onCleanup(() => window.removeEventListener("keydown", onKeyDown, { capture: true }))
+  })
+
   return (
     <Tabs.Content value={props.tab} class="mt-3 relative h-full">
-      <ScrollView
-        class="h-full"
-        viewportRef={(el: HTMLDivElement) => {
-          scroll = el
-          restoreScroll()
-        }}
-        onScroll={handleScroll as any}
-      >
-        <Switch>
-          <Match when={state()?.loaded}>{renderFile(contents())}</Match>
-          <Match when={state()?.loading}>
-            <div class="px-6 py-4 text-text-weak">{language.t("common.loading")}...</div>
-          </Match>
-          <Match when={state()?.error}>{(err) => <div class="px-6 py-4 text-text-weak">{err()}</div>}</Match>
-        </Switch>
-      </ScrollView>
+      <Switch>
+        <Match when={state()?.loaded && editMode()}>
+          <EditableFile
+            file={path() ?? ""}
+            content={contents()}
+            editedContent={getEditedContent() ?? contents()}
+            onContentChange={setEditedContent}
+            onSelectionChange={setEditSelection}
+            onSave={async (content) => {
+              await file.save(path()!, content)
+              clearEditedContent()
+            }}
+            onViewMode={() => setEditMode(false)}
+          />
+        </Match>
+        <Match when={state()?.loaded && !editMode()}>
+          <ScrollView
+            class="h-full"
+            viewportRef={(el: HTMLDivElement) => {
+              scroll = el
+              restoreScroll()
+            }}
+            onScroll={handleScroll}
+          >
+            <div class="editable-file-toolbar">
+              <div class="editable-file-toolbar-left">
+                <span class="editable-file-mode-label">View Mode</span>
+              </div>
+              <div class="editable-file-toolbar-right">
+                <Button
+                  variant="secondary"
+                  size="small"
+                  onClick={() => setEditMode(true)}
+                >
+                  Edit
+                </Button>
+              </div>
+            </div>
+            {renderFile(contents())}
+          </ScrollView>
+        </Match>
+        <Match when={state()?.loading}>
+          <div class="px-6 py-4 text-text-weak">{language.t("common.loading")}...</div>
+        </Match>
+        <Match when={state()?.error}>{(err) => <div class="px-6 py-4 text-text-weak">{err()}</div>}</Match>
+      </Switch>
     </Tabs.Content>
   )
 }

@@ -1,4 +1,4 @@
-import { For, Match, Show, Switch, createEffect, createMemo, onCleanup, type JSX } from "solid-js"
+import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
 import { useParams } from "@solidjs/router"
@@ -39,6 +39,8 @@ export function SessionSidePanel(props: {
   const language = useLanguage()
   const command = useCommand()
   const dialog = useDialog()
+
+  const [editedContents, setEditedContents] = createSignal<Record<string, string>>({})
 
   const isDesktop = createMediaQuery("(min-width: 768px)")
   const sessionKey = createMemo(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
@@ -322,7 +324,7 @@ export function SessionSidePanel(props: {
                 </Show>
 
                 <Show when={activeFileTab()} keyed>
-                  {(tab) => <FileTabContent tab={tab} />}
+                  {(tab) => <FileTabContent tab={tab} editedContents={editedContents()} setEditedContents={setEditedContents} />}
                 </Show>
               </Tabs>
               <DragOverlay>

@@ -6,6 +6,8 @@ import { Ripgrep } from "../../file/ripgrep"
 import { LSP } from "../../lsp"
 import { Instance } from "../../project/instance"
 import { lazy } from "../../util/lazy"
+import { Bus } from "../../bus"
+import { Log } from "../../util/log"
 
 export const FileRoutes = lazy(() =>
   new Hono()
@@ -192,6 +194,46 @@ export const FileRoutes = lazy(() =>
       async (c) => {
         const content = await File.status()
         return c.json(content)
+      },
+    )
+    .post(
+      "/file/content",
+      describeRoute({
+        summary: "Write file",
+        description: "Write content to a specified file.",
+        operationId: "file.write",
+        responses: {
+          200: {
+            description: "Success",
+            content: {
+              "application/json": {
+                schema: resolver(z.object({ ok: z.boolean() })),
+              },
+            },
+          },
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          path: z.string(),
+          content: z.string(),
+        }),
+      ),
+      async (c) => {
+        const log = Log.create({ service: "file.write" })
+        try {
+          const body = c.req.valid("json")
+          log.info("write request", { path: body.path, contentLength: body.content.length })
+          await File.write(body.path, body.content)
+          await Bus.publish(File.Event.Edited, { file: body.path })
+          log.info("write success", { path: body.path })
+          return c.json({ ok: true })
+        } catch (e) {
+          const message = e instanceof Error ? e.message : String(e)
+          log.error("write failed", { error: message, stack: e instanceof Error ? e.stack : undefined })
+          return c.json({ error: message }, 500)
+        }
       },
     ),
 )
