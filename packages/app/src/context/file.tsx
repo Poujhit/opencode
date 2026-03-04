@@ -245,6 +245,27 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       viewCache.clear()
     })
 
+    const save = async (input: string, content: string) => {
+      const file = path.normalize(input)
+      if (!file) return
+
+      const response = await sdk.client.file.write({
+        path: file,
+        content,
+      })
+
+      if (response.error) {
+        throw new Error(
+          typeof response.error === "string"
+            ? response.error
+            : (response.error as any)?.message ?? (response.error as any)?.error ?? "Failed to save file"
+        )
+      }
+
+      // Reload file to get updated content, diff, etc.
+      await load(file, { force: true })
+    }
+
     return {
       ready: () => view().ready(),
       normalize: path.normalize,
@@ -267,6 +288,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       },
       get,
       load,
+      save,
       scrollTop,
       scrollLeft,
       setScrollTop,

@@ -1,1 +1,65 @@
 @import "@opencode-ai/ui/styles/tailwind";
+
+/* Editable File Component */
+.editable-file {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+}
+
+.editable-file-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 4px 12px;
+  border-bottom: 1px solid var(--border-base, #333);
+  background: var(--surface-base, #1a1a1a);
+  gap: 8px;
+  position: sticky;
+  top: 0;
+  z-index: 10;
+}
+
+.editable-file-toolbar-left {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.editable-file-toolbar-right {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.editable-file-mode-label {
+  font-size: 12px;
+  font-weight: 500;
+  color: var(--text-dimmed, #888);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+
+.editable-file-editor {
+  flex: 1;
+  overflow: hidden;
+  position: relative;
+}
+
+.editable-file-editor .cm-editor {
+  height: 100%;
+  background-color: transparent !important;
+}
+
+.editable-file-editor .cm-scroller {
+  overflow: auto;
+}
+
+.editable-file-editor .cm-gutters {
+  background-color: transparent !important;
+}
+
+.editable-file-editor .cm-activeLineGutter {
+  background-color: transparent !important;
+}
