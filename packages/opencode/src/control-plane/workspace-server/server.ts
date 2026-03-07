@@ -1,6 +1,7 @@
 import { Hono } from "hono"
 import { Instance } from "../../project/instance"
 import { InstanceBootstrap } from "../../project/bootstrap"
+import { GitRoutes } from "../../server/routes/git"
 import { SessionRoutes } from "../../server/routes/session"
 import { WorkspaceServerRoutes } from "./routes"
 import { WorkspaceContext } from "../workspace-context"
@@ -51,6 +52,7 @@ export namespace WorkspaceServer {
         })
       })
       .route("/session", session)
+      .route("/git", GitRoutes())
       .route("/", WorkspaceServerRoutes())
   }
 

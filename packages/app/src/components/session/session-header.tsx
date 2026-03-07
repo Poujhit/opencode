@@ -24,6 +24,7 @@ import { useSync } from "@/context/sync"
 import { decode64 } from "@/utils/base64"
 import { Persist, persisted } from "@/utils/persist"
 import { StatusPopover } from "../status-popover"
+import { SessionGit } from "./session-git"
 
 const OPEN_APPS = [
   "vscode",
@@ -390,6 +391,7 @@ export function SessionHeader() {
           <Portal mount={mount()}>
             <div class="flex items-center gap-2">
               <StatusPopover />
+              <SessionGit />
               <Show when={projectDirectory()}>
                 <div class="hidden xl:flex items-center">
                   <Show
