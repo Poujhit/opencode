@@ -580,3 +580,25 @@ export function FileTabContent(props: {
     </Tabs.Content>
   )
 }
+
+
+// new change
+{/* 
+    <Tabs.Content value={props.tab} class="mt-3 relative flex h-full min-h-0 flex-col overflow-hidden contain-strict">
+      <ScrollView
+        class="h-full min-h-0 flex-1"
+        viewportRef={(el: HTMLDivElement) => {
+          scroll = el
+          restoreScroll()
+        }}
+        onScroll={handleScroll as any}
+      >
+        <Switch>
+          <Match when={state()?.loaded}>{renderFile(contents())}</Match>
+          <Match when={state()?.loading}>
+            <div class="px-6 py-4 text-text-weak">{language.t("common.loading")}...</div>
+          </Match>
+          <Match when={state()?.error}>{(err) => <div class="px-6 py-4 text-text-weak">{err()}</div>}</Match>
+        </Switch>
+      </ScrollView>
+    </Tabs.Content> */}
