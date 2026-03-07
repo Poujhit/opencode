@@ -228,6 +228,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
       prompt.reset()
       input.setMode("normal")
       input.setPopover(null)
+      window.dispatchEvent(new CustomEvent("prompt-submitted"))
     }
 
     const restoreInput = () => {
@@ -297,6 +298,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
 
     const context = prompt.context.items().slice()
     const commentItems = context.filter((item) => item.type === "file" && !!item.comment?.trim())
+    const fileItems = context.filter((item) => item.type === "file")
 
     const messageID = Identifier.ascending("message")
     const { requestParts, optimisticParts } = buildRequestParts({
@@ -333,7 +335,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
         messageID,
       })
 
-    removeCommentItems(commentItems)
+    removeCommentItems(fileItems)
     clearInput()
     addOptimisticMessage()
 
@@ -351,7 +353,7 @@ export function createPromptSubmit(input: PromptSubmitInput) {
           sync.set("session_status", session.id, { type: "idle" })
         }
         removeOptimisticMessage()
-        restoreCommentItems(commentItems)
+        restoreCommentItems(fileItems)
         restoreInput()
       }
 

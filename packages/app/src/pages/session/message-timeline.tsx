@@ -46,9 +46,9 @@ const messageComments = (parts: Part[]): MessageComment[] =>
         comment: next.comment,
         selection: next.selection
           ? {
-              startLine: next.selection.startLine,
-              endLine: next.selection.endLine,
-            }
+            startLine: next.selection.startLine,
+            endLine: next.selection.endLine,
+          }
           : undefined,
       },
     ]
@@ -206,6 +206,7 @@ export function MessageTimeline(props: {
   anchor: (id: string) => string
   onRegisterMessage: (el: HTMLDivElement, id: string) => void
   onUnregisterMessage: (id: string) => void
+  onFileClick?: (path: string, selection?: { start: number; end: number }) => void
 }) {
   let touchGesture: number | undefined
 
@@ -724,7 +725,18 @@ export function MessageTimeline(props: {
                                 {(commentAccessor: () => MessageComment) => {
                                   const comment = createMemo(() => commentAccessor())
                                   return (
-                                    <div class="shrink-0 max-w-[260px] rounded-[6px] border border-border-weak-base bg-background-stronger px-2.5 py-2">
+                                    <button
+                                      type="button"
+                                      class="shrink-0 max-w-[260px] rounded-[6px] border border-border-weak-base bg-background-stronger px-2.5 py-2 text-left hover:bg-surface-raised-base transition-colors"
+                                      onClick={() =>
+                                        props.onFileClick?.(
+                                          comment().path,
+                                          comment().selection
+                                            ? { start: comment().selection!.startLine, end: comment().selection!.endLine }
+                                            : undefined,
+                                        )
+                                      }
+                                    >
                                       <div class="flex items-center gap-1.5 min-w-0 text-11-medium text-text-strong">
                                         <FileIcon
                                           node={{ path: comment().path, type: "file" }}
@@ -741,10 +753,12 @@ export function MessageTimeline(props: {
                                           )}
                                         </Show>
                                       </div>
-                                      <div class="pt-1 text-12-regular text-text-strong whitespace-pre-wrap break-words">
-                                        {comment().comment}
-                                      </div>
-                                    </div>
+                                      <Show when={comment().comment}>
+                                        <div class="pt-1 text-12-regular text-text-strong whitespace-pre-wrap break-words">
+                                          {comment().comment}
+                                        </div>
+                                      </Show>
+                                    </button>
                                   )
                                 }}
                               </Index>

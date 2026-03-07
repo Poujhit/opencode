@@ -1142,7 +1142,7 @@ export default function Page() {
 
       dockHeight = next
 
-      if (stick) autoScroll.forceScrollToBottom()
+      if (stick && delta > 0) autoScroll.forceScrollToBottom()
 
       if (el) scheduleScrollState(el)
       scrollSpy.markDirty()
@@ -1246,6 +1246,14 @@ export default function Page() {
                     anchor={anchor}
                     onRegisterMessage={scrollSpy.register}
                     onUnregisterMessage={scrollSpy.unregister}
+                    onFileClick={(path, selection) => {
+                      const tabUrl = file.tab(path)
+                      tabs().open(tabUrl)
+                      tabs().setActive(tabUrl)
+                      if (selection) {
+                        file.setSelectedLines(path, selection)
+                      }
+                    }}
                   />
                 </Show>
               </Match>
