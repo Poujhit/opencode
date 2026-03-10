@@ -586,7 +586,7 @@ export function FileTabContent(props: {
 {/* 
     <Tabs.Content value={props.tab} class="mt-3 relative flex h-full min-h-0 flex-col overflow-hidden contain-strict">
       <ScrollView
-        class="h-full min-h-0 flex-1"
+        class="h-full"
         viewportRef={(el: HTMLDivElement) => {
           scroll = el
           restoreScroll()
