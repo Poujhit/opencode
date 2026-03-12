@@ -120,13 +120,297 @@ export namespace Server {
             if (/^https:\/\/([a-z0-9-]+\.)*opencode\.ai$/.test(input)) {
               return input
             }
-            if (opts?.cors?.includes(input)) {
+            if ((opts.cors ?? []).includes(input)) {
               return input
             }
 
             return
           },
         }),
+      )
+      .route("/global", GlobalRoutes())
+      .put(
+        "/auth/:providerID",
+        describeRoute({
+          summary: "Set auth credentials",
+          description: "Set authentication credentials",
+          operationId: "auth.set",
+          responses: {
+            200: {
+              description: "Successfully set authentication credentials",
+              content: {
+                "application/json": {
+                  schema: resolver(z.boolean()),
+                },
+              },
+            },
+            ...errors(400),
+          },
+        }),
+        validator(
+          "param",
+          z.object({
+            providerID: z.string(),
+          }),
+        ),
+        validator("json", Auth.Info),
+        async (c) => {
+          const providerID = c.req.valid("param").providerID
+          const info = c.req.valid("json")
+          await Auth.set(providerID, info)
+          return c.json(true)
+        },
+      )
+      .delete(
+        "/auth/:providerID",
+        describeRoute({
+          summary: "Remove auth credentials",
+          description: "Remove authentication credentials",
+          operationId: "auth.remove",
+          responses: {
+            200: {
+              description: "Successfully removed authentication credentials",
+              content: {
+                "application/json": {
+                  schema: resolver(z.boolean()),
+                },
+              },
+            },
+            ...errors(400),
+          },
+        }),
+        validator(
+          "param",
+          z.object({
+            providerID: z.string(),
+          }),
+        ),
+        async (c) => {
+          const providerID = c.req.valid("param").providerID
+          await Auth.remove(providerID)
+          return c.json(true)
+        },
+      )
+      .use(async (c, next) => {
+        if (c.req.path === "/log") return next()
+        const workspaceID = c.req.query("workspace") || c.req.header("x-opencode-workspace")
+        const raw = c.req.query("directory") || c.req.header("x-opencode-directory") || process.cwd()
+        const directory = Filesystem.resolve(
+          (() => {
+            try {
+              return decodeURIComponent(raw)
+            } catch {
+              return raw
+            }
+          })(),
+        )
+
+        return WorkspaceContext.provide({
+          workspaceID: workspaceID ? WorkspaceID.make(workspaceID) : undefined,
+          async fn() {
+            return Instance.provide({
+              directory,
+              init: InstanceBootstrap,
+              async fn() {
+                return next()
+              },
+            })
+          },
+        })
+      })
+      .use(WorkspaceRouterMiddleware)
+      .get(
+        "/doc",
+        openAPIRouteHandler(app, {
+          documentation: {
+            info: {
+              title: "opencode",
+              version: "0.0.3",
+              description: "opencode api",
+            },
+            openapi: "3.1.1",
+          },
+        }),
+      )
+      .use(
+        validator(
+          "query",
+          z.object({
+            directory: z.string().optional(),
+            workspace: z.string().optional(),
+          }),
+        ),
+      )
+      .route("/project", ProjectRoutes())
+      .route("/git", GitRoutes())
+      .route("/pty", PtyRoutes())
+      .route("/config", ConfigRoutes())
+      .route("/experimental", ExperimentalRoutes())
+      .route("/session", SessionRoutes())
+      .route("/permission", PermissionRoutes())
+      .route("/question", QuestionRoutes())
+      .route("/provider", ProviderRoutes())
+      .route("/", FileRoutes())
+      .route("/mcp", McpRoutes())
+      .route("/tui", TuiRoutes())
+      .post(
+        "/instance/dispose",
+        describeRoute({
+          summary: "Dispose instance",
+          description: "Clean up and dispose the current OpenCode instance, releasing all resources.",
+          operationId: "instance.dispose",
+          responses: {
+            200: {
+              description: "Instance disposed",
+              content: {
+                "application/json": {
+                  schema: resolver(z.boolean()),
+                },
+              },
+            },
+          },
+        }),
+        async (c) => {
+          await Instance.dispose()
+          return c.json(true)
+        },
+      )
+      .get(
+        "/path",
+        describeRoute({
+          summary: "Get paths",
+          description: "Retrieve the current working directory and related path information for the OpenCode instance.",
+          operationId: "path.get",
+          responses: {
+            200: {
+              description: "Path",
+              content: {
+                "application/json": {
+                  schema: resolver(
+                    z
+                      .object({
+                        home: z.string(),
+                        state: z.string(),
+                        config: z.string(),
+                        worktree: z.string(),
+                        directory: z.string(),
+                      })
+                      .meta({
+                        ref: "Path",
+                      }),
+                  ),
+                },
+              },
+            },
+          },
+        }),
+        async (c) => {
+          return c.json({
+            home: Global.Path.home,
+            state: Global.Path.state,
+            config: Global.Path.config,
+            worktree: Instance.worktree,
+            directory: Instance.directory,
+          })
+        },
+      )
+      .get(
+        "/vcs",
+        describeRoute({
+          summary: "Get VCS info",
+          description: "Retrieve version control system (VCS) information for the current project, such as git branch.",
+          operationId: "vcs.get",
+          responses: {
+            200: {
+              description: "VCS info",
+              content: {
+                "application/json": {
+                  schema: resolver(Vcs.Info),
+                },
+              },
+            },
+          },
+        }),
+        async (c) => {
+          const branch = await Vcs.branch()
+          return c.json({
+            branch,
+          })
+        },
+      )
+      .get(
+        "/command",
+        describeRoute({
+          summary: "List commands",
+          description: "Get a list of all available commands in the OpenCode system.",
+          operationId: "command.list",
+          responses: {
+            200: {
+              description: "List of commands",
+              content: {
+                "application/json": {
+                  schema: resolver(Command.Info.array()),
+                },
+              },
+            },
+          },
+        }),
+        async (c) => {
+          const commands = await Command.list()
+          return c.json(commands)
+        },
+      )
+      .post(
+        "/log",
+        describeRoute({
+          summary: "Write log",
+          description: "Write a log entry to the server logs with specified level and metadata.",
+          operationId: "app.log",
+          responses: {
+            200: {
+              description: "Log entry written successfully",
+              content: {
+                "application/json": {
+                  schema: resolver(z.boolean()),
+                },
+              },
+            },
+            ...errors(400),
+          },
+        }),
+        validator(
+          "json",
+          z.object({
+            service: z.string().meta({ description: "Service name for the log entry" }),
+            level: z.enum(["debug", "info", "error", "warn"]).meta({ description: "Log level" }),
+            message: z.string().meta({ description: "Log message" }),
+            extra: z
+              .record(z.string(), z.any())
+              .optional()
+              .meta({ description: "Additional metadata for the log entry" }),
+          }),
+        ),
+        async (c) => {
+          const { service, level, message, extra } = c.req.valid("json")
+          const logger = Log.create({ service })
+
+          switch (level) {
+            case "debug":
+              logger.debug(message, extra)
+              break
+            case "info":
+              logger.info(message, extra)
+              break
+            case "error":
+              logger.error(message, extra)
+              break
+            case "warn":
+              logger.warn(message, extra)
+              break
+          }
+
+          return
+        },
       )
       .route("/global", GlobalRoutes())
       .put(

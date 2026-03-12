@@ -21,9 +21,13 @@ export function summaryText(input?: { files: number; added: number; removed: num
   if (!input) return ""
   return (
     <>
-      <span class="text-text-on-success-base">+{input.added}</span>
+      <span class="font-medium text-icon-success-base" style={{ color: "var(--icon-success-base)" }}>
+        +{input.added}
+      </span>
       <span class="inline-block w-2" />
-      <span class="text-text-on-critical-base">-{input.removed}</span>
+      <span class="font-medium text-icon-critical-base" style={{ color: "var(--icon-critical-base)" }}>
+        -{input.removed}
+      </span>
       <span> · {input.files}</span>
     </>
   )

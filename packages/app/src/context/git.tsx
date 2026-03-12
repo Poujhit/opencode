@@ -9,12 +9,12 @@ const POLL_MS = 5_000
 
 export function summary(input: GitStatus | undefined, include: boolean) {
   if (!input) return undefined
-  return include ? input.combined : input.staged
+  return include ? input.combined ?? input.staged : input.staged
 }
 
 export function changes(input: GitStatus | undefined) {
   if (!input) return 0
-  return input.combined.files
+  return input.combined?.files ?? input.staged?.files ?? 0
 }
 
 export function active(input: GitStatus | undefined) {
@@ -38,6 +38,22 @@ export const { use: useGit, provider: GitProvider } = createSimpleContext({
       generating: false,
     })
 
+    const sync = (status: GitStatus | undefined) => {
+      setStore("status", status)
+      if (!active(status)) {
+        setStore("branches", [])
+        return
+      }
+      if (status?.branch && store.branches.length === 0) {
+        void load().catch(() => {})
+      }
+    }
+
+    const reset = () => {
+      setStore("status", undefined)
+      setStore("branches", [])
+    }
+
     const refresh = async () => {
       if (refreshing) return refreshing
       if (typeof document !== "undefined" && document.visibilityState === "hidden") return
@@ -46,18 +62,18 @@ export const { use: useGit, provider: GitProvider } = createSimpleContext({
       refreshing = sdk.client.git
         .status()
         .then((result) => {
-          setStore("status", result.data)
-          if (!active(result.data)) {
-            setStore("branches", [])
-            return
-          }
-          if (result.data?.branch && store.branches.length === 0) {
-            void load().catch(() => {})
-          }
+          sync(result.data)
         })
-        .catch(() => {
-          setStore("status", undefined)
-          setStore("branches", [])
+        .catch(async (err) => {
+          try {
+            await sdk.client.instance.dispose()
+            const result = await sdk.client.git.status()
+            sync(result.data)
+            return
+          } catch {
+            console.error("[git] status refresh failed", err)
+            reset()
+          }
         })
         .finally(() => {
           if (first) setStore("loading", false)

@@ -26,6 +26,7 @@ describe("git helpers", () => {
   test("counts combined file changes", () => {
     expect(changes(undefined)).toBe(0)
     expect(changes(state)).toBe(3)
+    expect(changes({ ...state, combined: undefined } as unknown as Parameters<typeof changes>[0])).toBe(1)
   })
 
   test("reports whether git is active", () => {

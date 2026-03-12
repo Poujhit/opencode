@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test"
-import { mkdtempSync, rmSync, writeFileSync } from "fs"
+import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs"
 import { tmpdir } from "os"
 import path from "path"
 import { Git } from "./index"
@@ -133,6 +133,25 @@ describe("git parse helpers", () => {
 })
 
 describe("git integration", () => {
+  test("detects git after the instance was created before repo init", async () => {
+    const root = dir()
+
+    const first = await Instance.provide({
+      directory: root,
+      fn: () => Git.status(),
+    })
+    expect(first.root).toBeUndefined()
+
+    run(root, ["init", "-b", "main"])
+
+    const next = await Instance.provide({
+      directory: root,
+      fn: () => Git.status(),
+    })
+    expect(next.root).toBe(realpathSync(root))
+    expect(next.branch).toBe("main")
+  })
+
   test("lists branches and checks out an existing branch", async () => {
     const root = create()
     run(root, ["checkout", "-b", "feat"])

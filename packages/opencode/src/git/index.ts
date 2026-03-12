@@ -4,8 +4,10 @@ import { Identifier } from "@/id/id"
 import { Vcs } from "@/project/vcs"
 import { Instance } from "@/project/instance"
 import { Provider } from "@/provider/provider"
+import { ProviderID, ModelID } from "@/provider/schema"
 import { LLM } from "@/session/llm"
 import type { MessageV2 } from "@/session/message-v2"
+import { MessageID, SessionID } from "@/session/schema"
 import { git } from "@/util/git"
 import { Log } from "@/util/log"
 import path from "path"
@@ -125,8 +127,19 @@ export namespace Git {
     removed: number
   }
 
-  function ensure() {
-    if (Instance.project.vcs === "git") return
+  async function inside() {
+    if (Instance.project.vcs === "git") return true
+    const result = await git(["rev-parse", "--is-inside-work-tree"], {
+      cwd: Instance.directory,
+      env: {
+        GIT_OPTIONAL_LOCKS: "0",
+      },
+    })
+    return result.exitCode === 0 && result.text().trim() === "true"
+  }
+
+  async function ensure() {
+    if (await inside()) return
     throw new Error("Git is not available for this workspace")
   }
 
@@ -228,7 +241,7 @@ export namespace Git {
   }
 
   async function call(args: string[]) {
-    ensure()
+    await ensure()
     const result = await git(args, {
       cwd: Instance.directory,
       env: {
@@ -246,7 +259,7 @@ export namespace Git {
   }
 
   async function head() {
-    if (Instance.project.vcs !== "git") return false
+    if (!(await inside())) return false
     const result = await git(["rev-parse", "--verify", "HEAD"], {
       cwd: Instance.directory,
       env: {
@@ -257,7 +270,7 @@ export namespace Git {
   }
 
   async function remotes() {
-    if (Instance.project.vcs !== "git") return []
+    if (!(await inside())) return []
     const result = await git(["remote"], {
       cwd: Instance.directory,
       env: {
@@ -273,7 +286,7 @@ export namespace Git {
   }
 
   async function root() {
-    if (Instance.project.vcs !== "git") return undefined
+    if (!(await inside())) return undefined
     return run(["rev-parse", "--show-toplevel"]).catch(() => undefined)
   }
 
@@ -283,7 +296,9 @@ export namespace Git {
         const full = path.join(Instance.directory, file)
         if (!Instance.containsPath(full)) return 0
         if (!(await Bun.file(full).exists())) return 0
-        const text = await Bun.file(full).text().catch(() => "")
+        const text = await Bun.file(full)
+          .text()
+          .catch(() => "")
         if (!text) return 0
         return text.split("\n").length
       }),
@@ -292,7 +307,7 @@ export namespace Git {
   }
 
   async function untracked() {
-    if (Instance.project.vcs !== "git") return empty()
+    if (!(await inside())) return empty()
     const out = await run(["ls-files", "--others", "--exclude-standard"]).catch(() => "")
     const files = out ? out.split("\n").filter(Boolean) : []
     return {
@@ -428,7 +443,7 @@ export namespace Git {
   }
 
   export async function status() {
-    if (Instance.project.vcs !== "git") {
+    if (!(await inside())) {
       return {
         root: undefined,
         branch: undefined,
@@ -486,7 +501,7 @@ export namespace Git {
   }
 
   export async function branches() {
-    if (Instance.project.vcs !== "git") return [] as Branch[]
+    if (!(await inside())) return [] as Branch[]
     const out = await run(["branch", "--list", "--format=%(refname:short)\t%(HEAD)"]).catch(() => "")
     return parseBranches(out)
   }
@@ -540,14 +555,14 @@ export namespace Git {
 
   async function pickModel(input?: { providerID?: string; modelID?: string }) {
     if (input?.providerID && input.modelID) {
-      return Provider.getModel(input.providerID, input.modelID)
+      return Provider.getModel(ProviderID.make(input.providerID), ModelID.make(input.modelID))
         .then((item) => ({
           source: "session" as const,
           model: item,
         }))
         .catch(() => {
-        fail("The selected session model is not available")
-      })
+          fail("The selected session model is not available")
+        })
     }
     const picked = await Provider.defaultModel().catch(() => undefined)
     if (!picked) fail("No default model is configured")
@@ -568,8 +583,8 @@ export namespace Git {
     const agent = await Agent.get("build")
     if (!agent) fail("The build agent is not available")
     const user: MessageV2.User = {
-      id: Identifier.ascending("message"),
-      sessionID: input.sessionID ?? Identifier.ascending("session"),
+      id: MessageID.ascending(),
+      sessionID: input.sessionID ? SessionID.make(input.sessionID) : SessionID.descending(),
       time: {
         created: Date.now(),
       },
