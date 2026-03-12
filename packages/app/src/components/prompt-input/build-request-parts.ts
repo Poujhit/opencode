@@ -136,18 +136,18 @@ export function buildRequestParts(input: BuildRequestPartsInput) {
       filename: getFilename(item.path),
     } satisfies PromptRequestPart
 
-    if (!comment) return [filePart]
+    if (!comment && !item.selection) return [filePart]
 
     return [
       {
         id: Identifier.ascending("part"),
         type: "text",
-        text: formatCommentNote({ path: item.path, selection: item.selection, comment }),
+        text: comment ? formatCommentNote({ path: item.path, selection: item.selection, comment }) : "",
         synthetic: true,
         metadata: createCommentMetadata({
           path: item.path,
           selection: item.selection,
-          comment,
+          comment: comment || "", // Pass an empty string if no explicit comment was provided
           preview: item.preview,
           origin: item.commentOrigin,
         }),

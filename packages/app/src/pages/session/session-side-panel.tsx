@@ -1,7 +1,6 @@
 import { For, Match, Show, Switch, createEffect, createMemo, createSignal, onCleanup, type JSX } from "solid-js"
 import { createStore } from "solid-js/store"
 import { createMediaQuery } from "@solid-primitives/media"
-import { useParams } from "@solidjs/router"
 import { Tabs } from "@opencode-ai/ui/tabs"
 import { IconButton } from "@opencode-ai/ui/icon-button"
 import { TooltipKeybind } from "@opencode-ai/ui/tooltip"
@@ -26,27 +25,26 @@ import { FileTabContent } from "@/pages/session/file-tabs"
 import { createOpenSessionFileTab, getTabReorderIndex, type Sizing } from "@/pages/session/helpers"
 import { StickyAddButton } from "@/pages/session/review-tab"
 import { setSessionHandoff } from "@/pages/session/handoff"
+import { useSessionLayout } from "@/pages/session/session-layout"
 
 export function SessionSidePanel(props: {
   reviewPanel: () => JSX.Element
   activeDiff?: string
   focusReviewDiff: (path: string) => void
+  reviewSnap: boolean
   size: Sizing
 }) {
-  const params = useParams()
   const layout = useLayout()
   const sync = useSync()
   const file = useFile()
   const language = useLanguage()
   const command = useCommand()
   const dialog = useDialog()
+  const { params, sessionKey, tabs, view } = useSessionLayout()
 
   const [editedContents, setEditedContents] = createSignal<Record<string, string>>({})
 
   const isDesktop = createMediaQuery("(min-width: 768px)")
-  const sessionKey = createMemo(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
-  const tabs = createMemo(() => layout.tabs(sessionKey))
-  const view = createMemo(() => layout.view(sessionKey))
 
   const reviewOpen = createMemo(() => isDesktop() && view().reviewPanel.opened())
   const fileOpen = createMemo(() => isDesktop() && layout.fileTree.opened())
@@ -56,11 +54,6 @@ export function SessionSidePanel(props: {
     if (!open()) return "0px"
     if (reviewOpen()) return `calc(100% - ${layout.session.width()}px)`
     return `${layout.fileTree.width()}px`
-  })
-  const reviewWidth = createMemo(() => {
-    if (!reviewOpen()) return "0px"
-    if (!fileOpen()) return "100%"
-    return `calc(100% - ${layout.fileTree.width()}px)`
   })
   const treeWidth = createMemo(() => (fileOpen() ? `${layout.fileTree.width()}px` : "0px"))
 
@@ -110,7 +103,7 @@ export function SessionSidePanel(props: {
 
   const empty = (msg: string) => (
     <div class="h-full flex flex-col">
-      <div class="h-12 shrink-0" aria-hidden />
+      <div class="h-6 shrink-0" aria-hidden />
       <div class="flex-1 pb-64 flex items-center justify-center text-center">
         <div class="text-12-regular text-text-weak">{msg}</div>
       </div>
@@ -233,10 +226,9 @@ export function SessionSidePanel(props: {
         inert={!open()}
         class="relative min-w-0 h-full flex shrink-0 overflow-hidden bg-background-base"
         classList={{
-          "opacity-100": open(),
-          "opacity-0 pointer-events-none": !open(),
-          "transition-[width,opacity] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
-            !props.size.active(),
+          "pointer-events-none": !open(),
+          "transition-[width] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
+            !props.size.active() && !props.reviewSnap,
         }}
         style={{ width: panelWidth() }}
       >
@@ -244,14 +236,10 @@ export function SessionSidePanel(props: {
           <div
             aria-hidden={!reviewOpen()}
             inert={!reviewOpen()}
-            class="relative min-w-0 h-full shrink-0 overflow-hidden bg-background-base"
+            class="relative min-w-0 h-full flex-1 overflow-hidden bg-background-base"
             classList={{
-              "opacity-100": reviewOpen(),
-              "opacity-0 pointer-events-none": !reviewOpen(),
-              "transition-[width,opacity] duration-[240ms] ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
-                !props.size.active(),
+              "pointer-events-none": !reviewOpen(),
             }}
-            style={{ width: reviewWidth() }}
           >
             <div class="size-full min-w-0 h-full bg-background-base">
               <DragDropProvider
@@ -341,7 +329,7 @@ export function SessionSidePanel(props: {
                   <Tabs.Content value="empty" class="flex flex-col h-full overflow-hidden contain-strict">
                     <Show when={activeTab() === "empty"}>
                       <div class="relative pt-2 flex-1 min-h-0 overflow-hidden">
-                        <div class="h-full px-6 pb-42 flex flex-col items-center justify-center text-center gap-6">
+                        <div class="h-full px-6 pb-42 -mt-4 flex flex-col items-center justify-center text-center gap-6">
                           <Mark class="w-14 opacity-10" />
                           <div class="text-14-regular text-text-weak max-w-56">
                             {language.t("session.files.selectToOpen")}
@@ -387,9 +375,8 @@ export function SessionSidePanel(props: {
             inert={!fileOpen()}
             class="relative min-w-0 h-full shrink-0 overflow-hidden"
             classList={{
-              "opacity-100": fileOpen(),
-              "opacity-0 pointer-events-none": !fileOpen(),
-              "transition-[width,opacity] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
+              "pointer-events-none": !fileOpen(),
+              "transition-[width] duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] will-change-[width] motion-reduce:transition-none":
                 !props.size.active(),
             }}
             style={{ width: treeWidth() }}
@@ -437,7 +424,11 @@ export function SessionSidePanel(props: {
                         />
                       </Show>
                     </Match>
-                    <Match when={true}>{empty(language.t(reviewEmptyKey()))}</Match>
+                    <Match when={true}>
+                      {empty(
+                        language.t(sync.project && !sync.project.vcs ? "session.review.noChanges" : reviewEmptyKey()),
+                      )}
+                    </Match>
                   </Switch>
                 </Tabs.Content>
                 <Tabs.Content value="all" class="bg-background-stronger px-3 py-0">

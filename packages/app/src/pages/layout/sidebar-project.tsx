@@ -12,7 +12,6 @@ import { useLanguage } from "@/context/language"
 import { useNotification } from "@/context/notification"
 import { ProjectIcon, SessionItem, type SessionItemProps } from "./sidebar-items"
 import { childMapByParent, displayName, sortedRootSessions } from "./helpers"
-import { projectSelected, projectTileActive } from "./sidebar-project-helpers"
 
 export type ProjectSidebarContext = {
   currentDir: Accessor<string>
@@ -91,6 +90,7 @@ const ProjectTile = (props: {
       modal={!props.sidebarHovering()}
       onOpenChange={(value) => {
         props.setMenu(value)
+        props.setSuppressHover(value)
         if (value) props.setOpen(false)
       }}
     >
@@ -106,6 +106,12 @@ const ProjectTile = (props: {
           "bg-transparent border border-transparent hover:bg-surface-base-hover hover:border-border-weak-base":
             !props.selected() && !props.active(),
           "bg-surface-base-hover border border-border-weak-base": !props.selected() && props.active(),
+        }}
+        onPointerDown={(event) => {
+          if (!props.overlay()) return
+          if (event.button !== 2 && !(event.button === 0 && event.ctrlKey)) return
+          props.setSuppressHover(true)
+          event.preventDefault()
         }}
         onMouseEnter={(event: MouseEvent) => {
           if (!props.overlay()) return
@@ -270,8 +276,10 @@ export const SortableProject = (props: {
   const globalSync = useGlobalSync()
   const language = useLanguage()
   const sortable = createSortable(props.project.worktree)
-  const selected = createMemo(() =>
-    projectSelected(props.ctx.currentDir(), props.project.worktree, props.project.sandboxes),
+  const selected = createMemo(
+    () =>
+      props.project.worktree === props.ctx.currentDir() ||
+      props.project.sandboxes?.includes(props.ctx.currentDir()) === true,
   )
   const workspaces = createMemo(() => props.ctx.workspaceIds(props.project).slice(0, 2))
   const workspaceEnabled = createMemo(() => props.ctx.workspacesEnabled(props.project))
@@ -284,15 +292,8 @@ export const SortableProject = (props: {
 
   const preview = createMemo(() => !props.mobile && props.ctx.sidebarOpened())
   const overlay = createMemo(() => !props.mobile && !props.ctx.sidebarOpened())
-  const active = createMemo(() =>
-    projectTileActive({
-      menu: state.menu,
-      preview: preview(),
-      open: state.open,
-      overlay: overlay(),
-      hoverProject: props.ctx.hoverProject(),
-      worktree: props.project.worktree,
-    }),
+  const active = createMemo(
+    () => state.menu || (preview() ? state.open : overlay() && props.ctx.hoverProject() === props.project.worktree),
   )
 
   createEffect(() => {

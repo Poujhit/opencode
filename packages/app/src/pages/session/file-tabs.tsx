@@ -1,7 +1,6 @@
 import { createEffect, createMemo, createSignal, Match, on, onCleanup, Switch } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
-import { useParams } from "@solidjs/router"
 import type { FileSearchHandle } from "@opencode-ai/ui/file"
 import { useFileComponent } from "@opencode-ai/ui/context/file"
 import { cloneSelectedLineRange, previewSelectedLines } from "@opencode-ai/ui/pierre/selection-bridge"
@@ -20,6 +19,8 @@ import { useLanguage } from "@/context/language"
 import { usePrompt } from "@/context/prompt"
 import { getSessionHandoff } from "@/pages/session/handoff"
 import { EditableFile } from "@/components/editable-file"
+import { useSessionLayout } from "@/pages/session/session-layout"
+import { useParams } from "@solidjs/router"
 
 function FileCommentMenu(props: {
   moreLabel: string
@@ -66,10 +67,7 @@ export function FileTabContent(props: {
   const language = useLanguage()
   const prompt = usePrompt()
   const fileComponent = useFileComponent()
-
-  const sessionKey = createMemo(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
-  const tabs = createMemo(() => layout.tabs(sessionKey))
-  const view = createMemo(() => layout.view(sessionKey))
+  const { sessionKey, tabs, view } = useSessionLayout()
 
   // Clear all edited contents when project directory changes
   createEffect(on(() => params.dir, () => { props.setEditedContents(() => ({})) }, { defer: true }))
@@ -586,7 +584,7 @@ export function FileTabContent(props: {
 {/* 
     <Tabs.Content value={props.tab} class="mt-3 relative flex h-full min-h-0 flex-col overflow-hidden contain-strict">
       <ScrollView
-        class="h-full min-h-0 flex-1"
+        class="h-full"
         viewportRef={(el: HTMLDivElement) => {
           scroll = el
           restoreScroll()

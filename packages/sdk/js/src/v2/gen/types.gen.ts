@@ -889,21 +889,6 @@ export type EventVcsBranchUpdated = {
   }
 }
 
-export type EventWorktreeReady = {
-  type: "worktree.ready"
-  properties: {
-    name: string
-    branch: string
-  }
-}
-
-export type EventWorktreeFailed = {
-  type: "worktree.failed"
-  properties: {
-    message: string
-  }
-}
-
 export type EventWorkspaceReady = {
   type: "workspace.ready"
   properties: {
@@ -957,6 +942,21 @@ export type EventPtyDeleted = {
   }
 }
 
+export type EventWorktreeReady = {
+  type: "worktree.ready"
+  properties: {
+    name: string
+    branch: string
+  }
+}
+
+export type EventWorktreeFailed = {
+  type: "worktree.failed"
+  properties: {
+    message: string
+  }
+}
+
 export type Event =
   | EventInstallationUpdated
   | EventInstallationUpdateAvailable
@@ -995,14 +995,14 @@ export type Event =
   | EventSessionDiff
   | EventSessionError
   | EventVcsBranchUpdated
-  | EventWorktreeReady
-  | EventWorktreeFailed
   | EventWorkspaceReady
   | EventWorkspaceFailed
   | EventPtyCreated
   | EventPtyUpdated
   | EventPtyExited
   | EventPtyDeleted
+  | EventWorktreeReady
+  | EventWorktreeFailed
 
 export type GlobalEvent = {
   directory: string
@@ -1225,7 +1225,11 @@ export type ProviderConfig = {
      * Timeout in milliseconds for requests to this provider. Default is 300000 (5 minutes). Set to false to disable timeout.
      */
     timeout?: number | false
-    [key: string]: unknown | string | boolean | number | false | undefined
+    /**
+     * Timeout in milliseconds between streamed SSE chunks for this provider. If no chunk arrives within this window, the request is aborted.
+     */
+    chunkTimeout?: number
+    [key: string]: unknown | string | boolean | number | false | number | undefined
   }
 }
 
@@ -1536,6 +1540,52 @@ export type NotFoundError = {
   }
 }
 
+export type GitSummary = {
+  files: number
+  added: number
+  removed: number
+}
+
+export type GitStatus = {
+  root?: string
+  branch?: string
+  upstream?: string
+  ahead: number
+  behind: number
+  clean: boolean
+  staged: GitSummary
+  unstaged: GitSummary
+  untracked: GitSummary
+  combined: GitSummary
+  has_upstream: boolean
+  can_push: boolean
+}
+
+export type GitBranch = {
+  name: string
+  current: boolean
+}
+
+export type GitCommit = {
+  sha: string
+  status: GitStatus
+}
+
+export type GitPush = {
+  status: GitStatus
+}
+
+export type GitMessage = {
+  message: string
+}
+
+export type GitGenerate = {
+  include_unstaged?: boolean
+  providerID?: string
+  modelID?: string
+  sessionID?: string
+}
+
 export type Model = {
   id: string
   providerID: string
@@ -1631,6 +1681,16 @@ export type ToolListItem = {
 
 export type ToolList = Array<ToolListItem>
 
+export type Workspace = {
+  id: string
+  type: string
+  branch: string | null
+  name: string | null
+  directory: string | null
+  extra: unknown | null
+  projectID: string
+}
+
 export type Worktree = {
   name: string
   branch: string
@@ -1643,16 +1703,6 @@ export type WorktreeCreateInput = {
    * Additional startup script to run after the project's start command
    */
   startCommand?: string
-}
-
-export type Workspace = {
-  id: string
-  branch: string | null
-  projectID: string
-  config: {
-    directory: string
-    type: "worktree"
-  }
 }
 
 export type WorktreeRemoveInput = {
@@ -2153,6 +2203,125 @@ export type ProjectUpdateResponses = {
 
 export type ProjectUpdateResponse = ProjectUpdateResponses[keyof ProjectUpdateResponses]
 
+export type GitStatusData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/git/status"
+}
+
+export type GitStatusResponses = {
+  /**
+   * Git status
+   */
+  200: GitStatus
+}
+
+export type GitStatusResponse = GitStatusResponses[keyof GitStatusResponses]
+
+export type GitBranchesData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/git/branches"
+}
+
+export type GitBranchesResponses = {
+  /**
+   * Git branches
+   */
+  200: Array<GitBranch>
+}
+
+export type GitBranchesResponse = GitBranchesResponses[keyof GitBranchesResponses]
+
+export type GitCheckoutData = {
+  body?: {
+    branch: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/git/checkout"
+}
+
+export type GitCheckoutResponses = {
+  /**
+   * Updated git status
+   */
+  200: GitStatus
+}
+
+export type GitCheckoutResponse = GitCheckoutResponses[keyof GitCheckoutResponses]
+
+export type GitCommitData = {
+  body?: {
+    message?: string
+    include_unstaged?: boolean
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/git/commit"
+}
+
+export type GitCommitResponses = {
+  /**
+   * Commit result
+   */
+  200: GitCommit
+}
+
+export type GitCommitResponse = GitCommitResponses[keyof GitCommitResponses]
+
+export type GitPushData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/git/push"
+}
+
+export type GitPushResponses = {
+  /**
+   * Push result
+   */
+  200: GitPush
+}
+
+export type GitPushResponse = GitPushResponses[keyof GitPushResponses]
+
+export type GitGenerateData = {
+  body?: GitGenerate
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/git/commit/generate"
+}
+
+export type GitGenerateResponses = {
+  /**
+   * Generated commit message
+   */
+  200: GitMessage
+}
+
+export type GitGenerateResponse = GitGenerateResponses[keyof GitGenerateResponses]
+
 export type PtyListData = {
   body?: never
   path?: never
@@ -2463,6 +2632,93 @@ export type ToolListResponses = {
 
 export type ToolListResponse = ToolListResponses[keyof ToolListResponses]
 
+export type ExperimentalWorkspaceListData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/workspace"
+}
+
+export type ExperimentalWorkspaceListResponses = {
+  /**
+   * Workspaces
+   */
+  200: Array<Workspace>
+}
+
+export type ExperimentalWorkspaceListResponse =
+  ExperimentalWorkspaceListResponses[keyof ExperimentalWorkspaceListResponses]
+
+export type ExperimentalWorkspaceCreateData = {
+  body?: {
+    id?: string
+    type: string
+    branch: string | null
+    extra: unknown | null
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/workspace"
+}
+
+export type ExperimentalWorkspaceCreateErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type ExperimentalWorkspaceCreateError =
+  ExperimentalWorkspaceCreateErrors[keyof ExperimentalWorkspaceCreateErrors]
+
+export type ExperimentalWorkspaceCreateResponses = {
+  /**
+   * Workspace created
+   */
+  200: Workspace
+}
+
+export type ExperimentalWorkspaceCreateResponse =
+  ExperimentalWorkspaceCreateResponses[keyof ExperimentalWorkspaceCreateResponses]
+
+export type ExperimentalWorkspaceRemoveData = {
+  body?: never
+  path: {
+    id: string
+  }
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/experimental/workspace/{id}"
+}
+
+export type ExperimentalWorkspaceRemoveErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type ExperimentalWorkspaceRemoveError =
+  ExperimentalWorkspaceRemoveErrors[keyof ExperimentalWorkspaceRemoveErrors]
+
+export type ExperimentalWorkspaceRemoveResponses = {
+  /**
+   * Workspace removed
+   */
+  200: Workspace
+}
+
+export type ExperimentalWorkspaceRemoveResponse =
+  ExperimentalWorkspaceRemoveResponses[keyof ExperimentalWorkspaceRemoveResponses]
+
 export type WorktreeRemoveData = {
   body?: WorktreeRemoveInput
   path?: never
@@ -2537,96 +2793,6 @@ export type WorktreeCreateResponses = {
 }
 
 export type WorktreeCreateResponse = WorktreeCreateResponses[keyof WorktreeCreateResponses]
-
-export type ExperimentalWorkspaceRemoveData = {
-  body?: never
-  path: {
-    id: string
-  }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
-  url: "/experimental/workspace/{id}"
-}
-
-export type ExperimentalWorkspaceRemoveErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type ExperimentalWorkspaceRemoveError =
-  ExperimentalWorkspaceRemoveErrors[keyof ExperimentalWorkspaceRemoveErrors]
-
-export type ExperimentalWorkspaceRemoveResponses = {
-  /**
-   * Workspace removed
-   */
-  200: Workspace
-}
-
-export type ExperimentalWorkspaceRemoveResponse =
-  ExperimentalWorkspaceRemoveResponses[keyof ExperimentalWorkspaceRemoveResponses]
-
-export type ExperimentalWorkspaceCreateData = {
-  body?: {
-    branch: string | null
-    config: {
-      directory: string
-      type: "worktree"
-    }
-  }
-  path: {
-    id: string
-  }
-  query?: {
-    directory?: string
-    workspace?: string
-  }
-  url: "/experimental/workspace/{id}"
-}
-
-export type ExperimentalWorkspaceCreateErrors = {
-  /**
-   * Bad request
-   */
-  400: BadRequestError
-}
-
-export type ExperimentalWorkspaceCreateError =
-  ExperimentalWorkspaceCreateErrors[keyof ExperimentalWorkspaceCreateErrors]
-
-export type ExperimentalWorkspaceCreateResponses = {
-  /**
-   * Workspace created
-   */
-  200: Workspace
-}
-
-export type ExperimentalWorkspaceCreateResponse =
-  ExperimentalWorkspaceCreateResponses[keyof ExperimentalWorkspaceCreateResponses]
-
-export type ExperimentalWorkspaceListData = {
-  body?: never
-  path?: never
-  query?: {
-    directory?: string
-    workspace?: string
-  }
-  url: "/experimental/workspace"
-}
-
-export type ExperimentalWorkspaceListResponses = {
-  /**
-   * Workspaces
-   */
-  200: Array<Workspace>
-}
-
-export type ExperimentalWorkspaceListResponse =
-  ExperimentalWorkspaceListResponses[keyof ExperimentalWorkspaceListResponses]
 
 export type WorktreeResetData = {
   body?: WorktreeResetInput
@@ -2767,6 +2933,7 @@ export type SessionCreateData = {
     parentID?: string
     title?: string
     permission?: PermissionRuleset
+    workspaceID?: string
   }
   path?: never
   query?: {
@@ -2968,9 +3135,6 @@ export type SessionChildrenResponse = SessionChildrenResponses[keyof SessionChil
 export type SessionTodoData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3009,9 +3173,6 @@ export type SessionInitData = {
     messageID: string
   }
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3197,9 +3358,6 @@ export type SessionSummarizeData = {
     auto?: boolean
   }
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3234,9 +3392,6 @@ export type SessionSummarizeResponse = SessionSummarizeResponses[keyof SessionSu
 export type SessionMessagesData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3293,9 +3448,6 @@ export type SessionPromptData = {
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3333,13 +3485,7 @@ export type SessionPromptResponse = SessionPromptResponses[keyof SessionPromptRe
 export type SessionDeleteMessageData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
-    /**
-     * Message ID
-     */
     messageID: string
   }
   query?: {
@@ -3374,13 +3520,7 @@ export type SessionDeleteMessageResponse = SessionDeleteMessageResponses[keyof S
 export type SessionMessageData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
-    /**
-     * Message ID
-     */
     messageID: string
   }
   query?: {
@@ -3418,17 +3558,8 @@ export type SessionMessageResponse = SessionMessageResponses[keyof SessionMessag
 export type PartDeleteData = {
   body?: never
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
-    /**
-     * Message ID
-     */
     messageID: string
-    /**
-     * Part ID
-     */
     partID: string
   }
   query?: {
@@ -3463,17 +3594,8 @@ export type PartDeleteResponse = PartDeleteResponses[keyof PartDeleteResponses]
 export type PartUpdateData = {
   body?: Part
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
-    /**
-     * Message ID
-     */
     messageID: string
-    /**
-     * Part ID
-     */
     partID: string
   }
   query?: {
@@ -3526,9 +3648,6 @@ export type SessionPromptAsyncData = {
     parts: Array<TextPartInput | FilePartInput | AgentPartInput | SubtaskPartInput>
   }
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3578,9 +3697,6 @@ export type SessionCommandData = {
     }>
   }
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {
@@ -3625,9 +3741,6 @@ export type SessionShellData = {
     command: string
   }
   path: {
-    /**
-     * Session ID
-     */
     sessionID: string
   }
   query?: {

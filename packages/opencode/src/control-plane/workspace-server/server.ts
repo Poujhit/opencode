@@ -1,9 +1,11 @@
 import { Hono } from "hono"
 import { Instance } from "../../project/instance"
 import { InstanceBootstrap } from "../../project/bootstrap"
+import { GitRoutes } from "../../server/routes/git"
 import { SessionRoutes } from "../../server/routes/session"
 import { WorkspaceServerRoutes } from "./routes"
 import { WorkspaceContext } from "../workspace-context"
+import { WorkspaceID } from "../schema"
 
 export namespace WorkspaceServer {
   export function App() {
@@ -20,9 +22,9 @@ export namespace WorkspaceServer {
 
     return new Hono()
       .use(async (c, next) => {
-        const workspaceID = c.req.query("workspace") || c.req.header("x-opencode-workspace")
+        const rawWorkspaceID = c.req.query("workspace") || c.req.header("x-opencode-workspace")
         const raw = c.req.query("directory") || c.req.header("x-opencode-directory")
-        if (workspaceID == null) {
+        if (rawWorkspaceID == null) {
           throw new Error("workspaceID parameter is required")
         }
         if (raw == null) {
@@ -38,7 +40,7 @@ export namespace WorkspaceServer {
         })()
 
         return WorkspaceContext.provide({
-          workspaceID,
+          workspaceID: WorkspaceID.make(rawWorkspaceID),
           async fn() {
             return Instance.provide({
               directory,
@@ -51,6 +53,7 @@ export namespace WorkspaceServer {
         })
       })
       .route("/session", session)
+      .route("/git", GitRoutes())
       .route("/", WorkspaceServerRoutes())
   }
 
