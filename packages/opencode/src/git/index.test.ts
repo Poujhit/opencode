@@ -101,6 +101,35 @@ describe("git parse helpers", () => {
       { name: "feat", current: false },
     ])
   })
+
+  test("compacts file and hunk summaries for commit generation", () => {
+    expect(
+      Git.compactNames([
+        "M\treadme.md",
+        "A\tnote.md",
+      ].join("\n")),
+    ).toBe([
+      "M\treadme.md",
+      "A\tnote.md",
+    ].join("\n"))
+
+    expect(
+      Git.compactPatch([
+        "diff --git a/readme.md b/readme.md",
+        "index 1111111..2222222 100644",
+        "--- a/readme.md",
+        "+++ b/readme.md",
+        "@@ -1 +1 @@",
+        "-hello",
+        "+world",
+      ].join("\n")),
+    ).toBe([
+      "diff --git a/readme.md b/readme.md",
+      "--- a/readme.md",
+      "+++ b/readme.md",
+      "@@ -1 +1 @@",
+    ].join("\n"))
+  })
 })
 
 describe("git integration", () => {

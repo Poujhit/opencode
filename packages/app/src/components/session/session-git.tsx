@@ -12,6 +12,7 @@ import { createStore } from "solid-js/store"
 import { summary, useGit } from "@/context/git"
 import { useLanguage } from "@/context/language"
 import { useLocal } from "@/context/local"
+import { useSDK } from "@/context/sdk"
 import { formatServerError } from "@/utils/server-errors"
 
 type Action = "commit" | "commit_push"
@@ -28,6 +29,11 @@ export function summaryText(input?: { files: number; added: number; removed: num
   )
 }
 
+function repo(input?: string) {
+  if (!input) return ""
+  return input.split(/[/\\]/).filter(Boolean).at(-1) ?? input
+}
+
 function requestError(language: ReturnType<typeof useLanguage>, err: unknown) {
   showToast({
     variant: "error",
@@ -41,6 +47,7 @@ function DialogCommit() {
   const dialog = useDialog()
   const language = useLanguage()
   const local = useLocal()
+  const sdk = useSDK()
   const params = useParams()
   const [store, setStore] = createStore({
     message: "",
@@ -55,6 +62,10 @@ function DialogCommit() {
     if (!item) return language.t("git.commit.model.default")
     return `${item.provider.id}/${item.id}`
   })
+  const root = createMemo(() => git.status?.root)
+  const name = createMemo(() => repo(root()))
+  const mismatch = createMemo(() => Boolean(root() && sdk.directory !== root()))
+  const has = createMemo(() => (picked()?.files ?? 0) > 0)
   const actionText = createMemo(() =>
     store.action === "commit_push" ? language.t("git.action.commitPush") : language.t("git.action.commit"),
   )
@@ -107,18 +118,41 @@ function DialogCommit() {
   }
 
   return (
-    <Dialog title={language.t("git.commit.title")} class="w-full max-w-[520px] mx-auto">
-      <div class="flex flex-col gap-4 px-4 pb-4">
-        <div class="flex flex-wrap items-center gap-2">
-          <div class="inline-flex items-center gap-2 rounded-md border border-border-weak-base bg-surface-panel px-2.5 py-1.5 text-12-regular text-text-weak">
-            <Icon name="branch" size="small" class="text-icon-base" />
-            <span class="text-text-strong">{git.status?.branch ?? language.t("git.branch.unknown")}</span>
+    <Dialog
+      title={language.t("git.commit.title")}
+      size="large"
+      class="w-full max-w-[520px] mx-auto [&_[data-slot=dialog-body]]:overflow-y-auto"
+    >
+      <div class="flex min-h-0 flex-col gap-4 px-4 pb-4">
+        <div class="rounded-md border border-border-weak-base bg-surface-panel px-3 py-2.5">
+          <div class="flex flex-wrap items-center gap-2">
+            <div class="inline-flex items-center gap-2 rounded-md border border-border-weak-base bg-surface-panel px-2.5 py-1.5 text-12-regular text-text-weak">
+              <Icon name="folder" size="small" class="text-icon-base" />
+              <span>{language.t("git.repo.label")}</span>
+              <span class="text-text-strong">{name() || language.t("git.repo.unknown")}</span>
+            </div>
+            <div class="inline-flex items-center gap-2 rounded-md border border-border-weak-base bg-surface-panel px-2.5 py-1.5 text-12-regular text-text-weak">
+              <Icon name="branch" size="small" class="text-icon-base" />
+              <span class="text-text-strong">{git.status?.branch ?? language.t("git.branch.unknown")}</span>
+            </div>
+            <div class="inline-flex items-center gap-2 rounded-md border border-border-weak-base bg-surface-panel px-2.5 py-1.5 text-12-regular text-text-weak">
+              <Icon name="models" size="small" class="text-icon-base" />
+              <span>{language.t("git.commit.model.label")}</span>
+              <span class="text-text-strong">{modelText()}</span>
+            </div>
           </div>
-          <div class="inline-flex items-center gap-2 rounded-md border border-border-weak-base bg-surface-panel px-2.5 py-1.5 text-12-regular text-text-weak">
-            <Icon name="models" size="small" class="text-icon-base" />
-            <span>{language.t("git.commit.model.label")}</span>
-            <span class="text-text-strong">{modelText()}</span>
+          <div class="mt-2 text-12-regular text-text-weak break-all">
+            <span class="text-text-muted">{language.t("git.repo.path")}</span>
+            <span class="ml-2 text-text-strong">{root() ?? sdk.directory}</span>
           </div>
+          <Show when={mismatch()}>
+            <div class="mt-2 rounded-md border border-border-critical-base bg-critical-secondary px-3 py-2 text-12-regular text-text-on-critical-base">
+              {language.t("git.repo.warning", {
+                current: sdk.directory,
+                root: root() ?? "",
+              })}
+            </div>
+          </Show>
         </div>
 
         <div class="grid grid-cols-1 sm:grid-cols-3 gap-2">
@@ -151,11 +185,11 @@ function DialogCommit() {
           onChange={(value) => setStore("message", value)}
           label={language.t("git.commit.message.label")}
           placeholder={language.t("git.commit.message.placeholder")}
-          class="min-h-[120px]"
+          class="min-h-[96px]"
         />
 
         <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-2">
-          <Button variant="ghost" size="small" onClick={auto} disabled={busy()}>
+          <Button variant="ghost" size="small" onClick={auto} disabled={busy() || !has()}>
             <SolidSwitch>
               <Match when={git.generating}>{language.t("git.commit.generate.loading")}</Match>
               <Match when={true}>{language.t("git.commit.generate")}</Match>
@@ -204,7 +238,7 @@ function DialogCommit() {
           <Button variant="ghost" size="large" onClick={() => dialog.close()} disabled={busy()}>
             {language.t("common.cancel")}
           </Button>
-          <Button variant="primary" size="large" onClick={submit} disabled={busy()}>
+          <Button variant="primary" size="large" onClick={submit} disabled={busy() || !has()}>
             <SolidSwitch>
               <Match when={git.committing || git.pushing}>{language.t("git.commit.submitting")}</Match>
               <Match when={true}>{actionText()}</Match>
@@ -220,8 +254,10 @@ export function SessionGit() {
   const git = useGit()
   const dialog = useDialog()
   const language = useLanguage()
-  const branch = createMemo(() => git.status?.branch ?? "")
+  const branch = createMemo(() => git.status?.branch ?? language.t("git.titlebar.unavailable"))
   const loading = createMemo(() => git.branching && git.branches.length === 0)
+  const ready = createMemo(() => git.active())
+  const clean = createMemo(() => git.status?.clean ?? true)
 
   const openCommit = () => dialog.show(() => <DialogCommit />)
   const checkout = async (name: string) => {
@@ -253,7 +289,6 @@ export function SessionGit() {
   }
 
   return (
-    <Show when={git.active()}>
       <div class="hidden xl:flex items-center gap-2">
         <DropdownMenu gutter={4} placement="bottom-end" onOpenChange={(open) => open && void load()}>
           <DropdownMenu.Trigger
@@ -261,7 +296,7 @@ export function SessionGit() {
             variant="ghost"
             size="small"
             class="h-[24px] px-2 border border-border-weak-base bg-surface-panel shadow-none gap-1.5"
-            disabled={git.branching}
+            disabled={!ready() || git.branching}
           >
             <Icon name="branch" size="small" class="text-icon-base" />
             <span class="max-w-[140px] truncate text-12-regular text-text-strong">{branch()}</span>
@@ -300,8 +335,10 @@ export function SessionGit() {
         </DropdownMenu>
 
         <div class="h-[24px] px-2 rounded-md border border-border-weak-base bg-surface-panel flex items-center text-12-regular text-text-weak">
-          <Show when={git.status?.clean} fallback={summaryText(git.status?.combined)}>
-            {language.t("git.summary.clean")}
+          <Show when={ready()} fallback={language.t("git.summary.unavailable")}>
+            <Show when={git.status?.clean} fallback={summaryText(git.status?.combined)}>
+              {language.t("git.summary.clean")}
+            </Show>
           </Show>
         </div>
 
@@ -311,23 +348,25 @@ export function SessionGit() {
             variant="ghost"
             size="small"
             class="h-[24px] px-2 border border-border-weak-base bg-surface-panel shadow-none gap-1.5"
-            disabled={git.committing || git.pushing}
+            disabled={!ready() || git.committing || git.pushing}
           >
             <span class="text-12-regular text-text-strong">{language.t("git.titlebar.actions")}</span>
             <Icon name="chevron-down" size="small" class="text-icon-weak" />
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
             <DropdownMenu.Content>
-              <DropdownMenu.Item onSelect={openCommit}>
+              <DropdownMenu.Item onSelect={openCommit} disabled={clean()}>
                 <DropdownMenu.ItemLabel>{language.t("git.action.commit")}</DropdownMenu.ItemLabel>
               </DropdownMenu.Item>
-              <DropdownMenu.Item onSelect={() => void push()} disabled={!git.status?.can_push || git.pushing}>
+              <DropdownMenu.Item
+                onSelect={() => void push()}
+                disabled={!git.status?.can_push || git.pushing || clean()}
+              >
                 <DropdownMenu.ItemLabel>{language.t("git.action.push")}</DropdownMenu.ItemLabel>
               </DropdownMenu.Item>
             </DropdownMenu.Content>
           </DropdownMenu.Portal>
         </DropdownMenu>
       </div>
-    </Show>
   )
 }

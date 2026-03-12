@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { active, changes, summary } from "./git"
 
 const state = {
+  root: "/repo",
   branch: "main",
   upstream: "origin/main",
   ahead: 0,
@@ -30,7 +31,7 @@ describe("git helpers", () => {
   test("reports whether git is active", () => {
     expect(active(undefined)).toBe(false)
     expect(active(state)).toBe(true)
-    expect(active({ ...state, branch: undefined })).toBe(false)
+    expect(active({ ...state, branch: undefined })).toBe(true)
+    expect(active({ ...state, branch: undefined, root: undefined })).toBe(false)
   })
 })
-

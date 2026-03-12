@@ -1543,6 +1543,7 @@ export type GitSummary = {
 }
 
 export type GitStatus = {
+  root?: string
   branch?: string
   upstream?: string
   ahead: number

@@ -18,7 +18,7 @@ export function changes(input: GitStatus | undefined) {
 }
 
 export function active(input: GitStatus | undefined) {
-  return Boolean(input?.branch)
+  return Boolean(input?.root || input?.branch)
 }
 
 export const { use: useGit, provider: GitProvider } = createSimpleContext({
@@ -47,12 +47,17 @@ export const { use: useGit, provider: GitProvider } = createSimpleContext({
         .status()
         .then((result) => {
           setStore("status", result.data)
+          if (!active(result.data)) {
+            setStore("branches", [])
+            return
+          }
           if (result.data?.branch && store.branches.length === 0) {
             void load().catch(() => {})
           }
         })
         .catch(() => {
           setStore("status", undefined)
+          setStore("branches", [])
         })
         .finally(() => {
           if (first) setStore("loading", false)

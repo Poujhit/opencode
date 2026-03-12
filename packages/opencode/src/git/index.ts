@@ -13,6 +13,9 @@ import z from "zod"
 
 export namespace Git {
   const log = Log.create({ service: "git" })
+  const FILE_MAX = 80
+  const HUNK_MAX = 200
+  const CHAR_MAX = 12_000
 
   export const Summary = z
     .object({
@@ -27,6 +30,7 @@ export namespace Git {
 
   export const Status = z
     .object({
+      root: z.string().optional(),
       branch: z.string().optional(),
       upstream: z.string().optional(),
       ahead: z.number().int(),
@@ -268,6 +272,11 @@ export namespace Git {
       .filter(Boolean)
   }
 
+  async function root() {
+    if (Instance.project.vcs !== "git") return undefined
+    return run(["rev-parse", "--show-toplevel"]).catch(() => undefined)
+  }
+
   async function lines(paths: string[]) {
     const list = await Promise.all(
       paths.map(async (file) => {
@@ -313,16 +322,115 @@ export namespace Git {
 
   async function patch(include: boolean) {
     if (include) {
-      const base = await run(["diff", "--cached", "--patch"]).catch(() => "")
-      const work = await run(["diff", "--patch"]).catch(() => "")
+      const base = await run(["diff", "--cached", "--patch", "--unified=0", "--no-color"]).catch(() => "")
+      const work = await run(["diff", "--patch", "--unified=0", "--no-color"]).catch(() => "")
       return [base, work].filter(Boolean).join("\n")
     }
-    return run(["diff", "--cached", "--patch"]).catch(() => "")
+    return run(["diff", "--cached", "--patch", "--unified=0", "--no-color"]).catch(() => "")
+  }
+
+  async function names(include: boolean) {
+    if (include) {
+      const [base, work, extra] = await Promise.all([
+        run(["diff", "--cached", "--name-status", "--find-renames"]).catch(() => ""),
+        run(["diff", "--name-status", "--find-renames"]).catch(() => ""),
+        run(["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
+      ])
+      return [
+        ...base.split("\n").filter(Boolean),
+        ...work.split("\n").filter(Boolean),
+        ...extra
+          .split("\n")
+          .filter(Boolean)
+          .map((item) => `A\t${item}`),
+      ]
+        .filter((item, idx, all) => all.indexOf(item) === idx)
+        .join("\n")
+    }
+    return run(["diff", "--cached", "--name-status", "--find-renames"]).catch(() => "")
+  }
+
+  export function compactNames(text: string) {
+    const list = text.split("\n").filter(Boolean)
+    const kept = list.slice(0, FILE_MAX)
+    const body = kept.join("\n").trim()
+    if (!body) return ""
+    if (list.length <= FILE_MAX) return body
+    return `${body}\n... ${list.length - FILE_MAX} more files`
+  }
+
+  export function compactPatch(text: string) {
+    const out: string[] = []
+    let files = 0
+    let hunks = 0
+    let chars = 0
+    let cut = false
+
+    for (const line of text.split("\n")) {
+      if (!line) continue
+      const keep =
+        line.startsWith("diff --git ") ||
+        line.startsWith("new file mode ") ||
+        line.startsWith("deleted file mode ") ||
+        line.startsWith("rename from ") ||
+        line.startsWith("rename to ") ||
+        line.startsWith("--- ") ||
+        line.startsWith("+++ ") ||
+        line.startsWith("@@")
+      if (!keep) continue
+
+      if (line.startsWith("diff --git ")) {
+        files += 1
+        if (files > FILE_MAX) {
+          cut = true
+          continue
+        }
+      }
+
+      if (line.startsWith("@@")) {
+        hunks += 1
+        if (hunks > HUNK_MAX) {
+          cut = true
+          continue
+        }
+      }
+
+      const next = chars === 0 ? line.length : chars + line.length + 1
+      if (next > CHAR_MAX) {
+        cut = true
+        break
+      }
+
+      out.push(line)
+      chars = next
+    }
+
+    const body = out.join("\n").trim()
+    if (!body) return ""
+    if (!cut) return body
+    return `${body}\n... diff summary truncated`
+  }
+
+  async function prompt(include: boolean) {
+    const [list, diff] = await Promise.all([names(include), patch(include)])
+    if (!list.trim() && !diff.trim()) fail("No diff is available to generate a commit message")
+
+    const out = [
+      compactNames(list) ? `Changed files:\n${compactNames(list)}` : "",
+      compactPatch(diff) ? `Change locations:\n${compactPatch(diff)}` : "",
+    ]
+      .filter(Boolean)
+      .join("\n\n")
+      .trim()
+
+    if (!out) fail("No diff is available to generate a commit message")
+    return out
   }
 
   export async function status() {
     if (Instance.project.vcs !== "git") {
       return {
+        root: undefined,
         branch: undefined,
         upstream: undefined,
         ahead: 0,
@@ -338,7 +446,8 @@ export namespace Git {
     }
 
     const hasHead = await head()
-    const [porcelain, stagedDiff, unstagedDiff, untrackedDiff, remote, joined] = await Promise.all([
+    const [dir, porcelain, stagedDiff, unstagedDiff, untrackedDiff, remote, joined] = await Promise.all([
+      root(),
       run(["status", "--porcelain=v2", "--branch", "--ahead-behind"]).catch(() => ""),
       hasHead ? diff(["diff", "--cached", "--numstat", "HEAD"]) : diff(["diff", "--cached", "--numstat"]),
       unstaged(),
@@ -349,6 +458,7 @@ export namespace Git {
     const info = parseStatus(porcelain)
     const rows = parseRows(joined)
     return {
+      root: dir,
       branch: info.branch,
       upstream: info.upstream,
       ahead: info.ahead,
@@ -451,15 +561,9 @@ export namespace Git {
       })
   }
 
-  async function diffs(include: boolean) {
-    const diff = await patch(include)
-    if (!diff.trim()) fail("No diff is available to generate a commit message")
-    return diff
-  }
-
   export async function generate(input: Generate) {
     ensure()
-    const [{ model, source }, diff] = await Promise.all([pickModel(input), diffs(input.include_unstaged)])
+    const [{ model, source }, diff] = await Promise.all([pickModel(input), prompt(input.include_unstaged)])
     const recent = await run(["log", "--format=%s", "-5"]).catch(() => "")
     const agent = await Agent.get("build")
     if (!agent) fail("The build agent is not available")
@@ -482,6 +586,7 @@ export namespace Git {
       modelID: model.id,
       sessionID: user.sessionID,
       include_unstaged: input.include_unstaged,
+      chars: diff.length,
     })
     const result = await LLM.stream({
       agent: {
