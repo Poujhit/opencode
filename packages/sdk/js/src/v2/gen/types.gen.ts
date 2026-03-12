@@ -1540,6 +1540,52 @@ export type NotFoundError = {
   }
 }
 
+export type GitSummary = {
+  files: number
+  added: number
+  removed: number
+}
+
+export type GitStatus = {
+  root?: string
+  branch?: string
+  upstream?: string
+  ahead: number
+  behind: number
+  clean: boolean
+  staged: GitSummary
+  unstaged: GitSummary
+  untracked: GitSummary
+  combined: GitSummary
+  has_upstream: boolean
+  can_push: boolean
+}
+
+export type GitBranch = {
+  name: string
+  current: boolean
+}
+
+export type GitCommit = {
+  sha: string
+  status: GitStatus
+}
+
+export type GitPush = {
+  status: GitStatus
+}
+
+export type GitMessage = {
+  message: string
+}
+
+export type GitGenerate = {
+  include_unstaged?: boolean
+  providerID?: string
+  modelID?: string
+  sessionID?: string
+}
+
 export type Model = {
   id: string
   providerID: string
@@ -2156,6 +2202,125 @@ export type ProjectUpdateResponses = {
 }
 
 export type ProjectUpdateResponse = ProjectUpdateResponses[keyof ProjectUpdateResponses]
+
+export type GitStatusData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/git/status"
+}
+
+export type GitStatusResponses = {
+  /**
+   * Git status
+   */
+  200: GitStatus
+}
+
+export type GitStatusResponse = GitStatusResponses[keyof GitStatusResponses]
+
+export type GitBranchesData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/git/branches"
+}
+
+export type GitBranchesResponses = {
+  /**
+   * Git branches
+   */
+  200: Array<GitBranch>
+}
+
+export type GitBranchesResponse = GitBranchesResponses[keyof GitBranchesResponses]
+
+export type GitCheckoutData = {
+  body?: {
+    branch: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/git/checkout"
+}
+
+export type GitCheckoutResponses = {
+  /**
+   * Updated git status
+   */
+  200: GitStatus
+}
+
+export type GitCheckoutResponse = GitCheckoutResponses[keyof GitCheckoutResponses]
+
+export type GitCommitData = {
+  body?: {
+    message?: string
+    include_unstaged?: boolean
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/git/commit"
+}
+
+export type GitCommitResponses = {
+  /**
+   * Commit result
+   */
+  200: GitCommit
+}
+
+export type GitCommitResponse = GitCommitResponses[keyof GitCommitResponses]
+
+export type GitPushData = {
+  body?: never
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/git/push"
+}
+
+export type GitPushResponses = {
+  /**
+   * Push result
+   */
+  200: GitPush
+}
+
+export type GitPushResponse = GitPushResponses[keyof GitPushResponses]
+
+export type GitGenerateData = {
+  body?: GitGenerate
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/git/commit/generate"
+}
+
+export type GitGenerateResponses = {
+  /**
+   * Generated commit message
+   */
+  200: GitMessage
+}
+
+export type GitGenerateResponse = GitGenerateResponses[keyof GitGenerateResponses]
 
 export type PtyListData = {
   body?: never

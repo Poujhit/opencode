@@ -43,6 +43,7 @@ import { Filesystem } from "@/util/filesystem"
 import { QuestionRoutes } from "./routes/question"
 import { PermissionRoutes } from "./routes/permission"
 import { GlobalRoutes } from "./routes/global"
+import { GitRoutes } from "./routes/git"
 import { MDNS } from "./mdns"
 import { lazy } from "@/util/lazy"
 

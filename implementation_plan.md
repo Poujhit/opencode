@@ -59,9 +59,9 @@ This plan covers the remaining new features to enhance the opencode desktop app'
 
 ## Feature 5: Top Bar Git Integration (Codex Style)
 **Goal**: Provide a Top Bar UI for Git operations, including branch selection, commit summary, and a commit modal with auto-generation capabilities.
-- [x] Add backend endpoints for Git operations (`status`, `commit`, `push`, `pr`)
-- [x] Add Top Bar Git UI (Branch name, diff summary, Commit dropdown)
-- [x] Add Commit Modal UI (Include unstaged toggle, auto-generate message, commit/push actions)
+- [] Add backend endpoints for Git operations (`status`, `commit`, `push`, `pr`)
+- [] Add Top Bar Git UI (Branch name, diff summary, Commit dropdown)
+- [] Add Commit Modal UI (Include unstaged toggle, auto-generate message, commit/push actions)
 
 **Approach**:
 - **Backend API (`opencode/src/server/routes/git.ts`)**: 
