@@ -71,6 +71,10 @@ export const getTabReorderIndex = (tabs: readonly string[], from: string, to: st
   return toIndex
 }
 
+export const reviewDrift = (live: string, shown: string, busy: boolean) => {
+  return !busy && live !== shown
+}
+
 export const createSizing = () => {
   const [state, setState] = createStore({ active: false })
   let t: number | undefined

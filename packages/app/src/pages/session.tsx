@@ -626,8 +626,13 @@ export default function Page() {
     on([() => sdk.directory, () => params.id] as const, ([, id]) => {
       if (!id) return
       untrack(() => {
-        void sync.session.sync(id)
-        void sync.session.todo(id)
+        void sync.session
+          .sync(id)
+          .then(() => {
+            if (!sync.session.get(id)) return
+            return sync.session.todo(id)
+          })
+          .catch(() => undefined)
       })
     }),
   )
@@ -1060,6 +1065,7 @@ export default function Page() {
       ? desktopFileTreeOpen() || (desktopReviewOpen() && activeTab() === "review")
       : store.mobileTab === "changes"
     if (!wants) return
+    if (!info()) return
     if (sync.data.session_diff[id] !== undefined) return
     if (sync.status === "loading") return
 

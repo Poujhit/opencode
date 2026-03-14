@@ -1,4 +1,4 @@
-import { createEffect, createMemo, createSignal, Match, on, onCleanup, Switch } from "solid-js"
+import { For, Show, createEffect, createMemo, createSignal, Match, on, onCleanup, Switch } from "solid-js"
 import { createStore } from "solid-js/store"
 import { Dynamic } from "solid-js/web"
 import type { FileSearchHandle } from "@opencode-ai/ui/file"
@@ -17,10 +17,13 @@ import { selectionFromLines, useFile, type FileSelection, type SelectedLineRange
 import { useComments } from "@/context/comments"
 import { useLanguage } from "@/context/language"
 import { usePrompt } from "@/context/prompt"
+import { useReview } from "@/context/review"
 import { getSessionHandoff } from "@/pages/session/handoff"
 import { EditableFile } from "@/components/editable-file"
+import { cloneReview, pending } from "@/context/review-state"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { useParams } from "@solidjs/router"
+import { reviewDrift } from "./helpers"
 
 function FileCommentMenu(props: {
   moreLabel: string
@@ -66,6 +69,7 @@ export function FileTabContent(props: {
   const comments = useComments()
   const language = useLanguage()
   const prompt = usePrompt()
+  const review = useReview()
   const fileComponent = useFileComponent()
   const { sessionKey, tabs, view } = useSessionLayout()
 
@@ -75,7 +79,7 @@ export function FileTabContent(props: {
   let scroll: HTMLDivElement | undefined
   let scrollFrame: number | undefined
   let restoreFrame: number | undefined
-  let pending: { x: number; y: number } | undefined
+  let scrollPending: { x: number; y: number } | undefined
   let codeScroll: HTMLElement[] = []
   let find: FileSearchHandle | null = null
 
@@ -294,14 +298,14 @@ export function FileTabContent(props: {
   }
 
   const queueScrollUpdate = (next: { x: number; y: number }) => {
-    pending = next
+    scrollPending = next
     if (scrollFrame !== undefined) return
 
     scrollFrame = requestAnimationFrame(() => {
       scrollFrame = undefined
 
-      const out = pending
-      pending = undefined
+      const out = scrollPending
+      scrollPending = undefined
       if (!out) return
 
       view().setScroll(props.tab, out)
@@ -477,6 +481,158 @@ export function FileTabContent(props: {
     })
   }
 
+  const item = createMemo(() => {
+    const p = path()
+    if (!p) return
+    const item = review.get(p)
+    if (!item || pending(item) === 0) return
+    return item
+  })
+
+  const reviewView = createMemo(() => {
+    const p = path()
+    if (!p || !item()) return
+    return review.view(p)
+  })
+
+  const files = createMemo(() => review.unresolved())
+  const fileIndex = createMemo(() => {
+    const p = path()
+    if (!p) return -1
+    return files().findIndex((item) => item.file === p)
+  })
+  const showStrip = createMemo(() => fileIndex() !== -1)
+  const [busy, setBusy] = createSignal(false)
+
+  const openReviewFile = (target: string) => {
+    const tab = file.tab(target)
+    tabs().open(tab)
+    tabs().setActive(tab)
+    void file.load(target)
+    setEditMode(true)
+  }
+
+  const step = (idx: number) => {
+    const list = files()
+    if (list.length === 0) return
+    const next = list[(idx + list.length) % list.length]
+    if (!next) return
+    openReviewFile(next.file)
+  }
+
+  const finish = (filePath: string, idx: number) => {
+    queueMicrotask(() => {
+      const next = files()[idx] ?? files()[idx - 1]
+      if (!next || next.file === filePath) return
+      openReviewFile(next.file)
+    })
+  }
+
+  const approve = (idx: number) => {
+    const filePath = path()
+    const at = fileIndex()
+    if (!filePath || at === -1) return
+    const next = review.approve(filePath, idx)
+    if (!next || pending(next) > 0) return
+    finish(filePath, at)
+  }
+
+  const reject = async (idx: number) => {
+    const filePath = path()
+    const at = fileIndex()
+    if (!filePath || at === -1 || busy()) return
+    const prev = item()
+    if (!prev) return
+    setBusy(true)
+    const next = review.reject(filePath, idx)
+    if (!next) {
+      setBusy(false)
+      return
+    }
+    const view = review.view(filePath)
+    if (!view) {
+      setBusy(false)
+      return
+    }
+    try {
+      await file.save(filePath, view.text)
+      clearEditedContent()
+      if (pending(next) > 0) return
+      finish(filePath, at)
+    } catch (error) {
+      review.set(filePath, cloneReview(prev))
+      showToast({
+        variant: "error",
+        title: "Failed to update review",
+        description: error instanceof Error ? error.message : "Unknown error",
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const approveAll = () => {
+    const filePath = path()
+    const at = fileIndex()
+    if (!filePath || at === -1) return
+    const next = review.approveAll(filePath)
+    if (!next || pending(next) > 0) return
+    finish(filePath, at)
+  }
+
+  const rejectAll = async () => {
+    const filePath = path()
+    const at = fileIndex()
+    if (!filePath || at === -1 || busy()) return
+    const prev = item()
+    if (!prev) return
+    setBusy(true)
+    const next = review.rejectAll(filePath)
+    const view = review.view(filePath)
+    if (!next || !view) {
+      setBusy(false)
+      return
+    }
+    try {
+      await file.save(filePath, view.text)
+      clearEditedContent()
+      finish(filePath, at)
+    } catch (error) {
+      review.set(filePath, cloneReview(prev))
+      showToast({
+        variant: "error",
+        title: "Failed to update review",
+        description: error instanceof Error ? error.message : "Unknown error",
+      })
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  createEffect(() => {
+    if (!item() || !reviewView()) return
+    clearEditedContent()
+    if (editMode()) return
+    setEditMode(true)
+  })
+
+  createEffect(() => {
+    const p = path()
+    const view = reviewView()
+    if (!p || !view || !state()?.loaded) return
+    if (!reviewDrift(contents(), view.text, busy())) return
+
+    // TODO: Rebase or auto-resolve review hunks against live disk edits instead of clearing them.
+    review.clear(p)
+    clearEditedContent()
+    void file.load(p, { force: true }).finally(() => {
+      showToast({
+        title: "AI review reset",
+        description: `${p} changed outside OpenCode. Reloaded the live file content.`,
+      })
+    })
+  })
+
   // Cmd+H: add highlighted lines to prompt context
   const addSelectionToPrompt = () => {
     const p = path()
@@ -527,22 +683,74 @@ export function FileTabContent(props: {
     onCleanup(() => window.removeEventListener("keydown", onKeyDown, { capture: true }))
   })
 
+  const strip = () => (
+    <div class="editable-file-review-strip">
+      <div class="editable-file-review-strip-left">
+        <Button variant="ghost" size="small" onClick={() => step(fileIndex() - 1)} disabled={files().length < 2}>
+          Prev
+        </Button>
+        <Button variant="ghost" size="small" onClick={() => step(fileIndex() + 1)} disabled={files().length < 2}>
+          Next
+        </Button>
+        <span class="editable-file-review-count">
+          {fileIndex() + 1} of {files().length}
+        </span>
+      </div>
+      <div class="editable-file-review-files">
+        <For each={files()}>
+          {(entry, idx) => (
+            <button
+              type="button"
+              class="editable-file-review-file"
+              classList={{ active: idx() === fileIndex() }}
+              onClick={() => openReviewFile(entry.file)}
+            >
+              <span class="editable-file-review-file-name">{entry.file}</span>
+              <span class="editable-file-review-file-badge">{pending(entry)}</span>
+            </button>
+          )}
+        </For>
+      </div>
+    </div>
+  )
+
   return (
     <Tabs.Content value={props.tab} class="mt-3 relative h-full">
       <Switch>
         <Match when={state()?.loaded && editMode()}>
-          <EditableFile
-            file={path() ?? ""}
-            content={contents()}
-            editedContent={getEditedContent() ?? contents()}
-            onContentChange={setEditedContent}
-            onSelectionChange={setEditSelection}
-            onSave={async (content) => {
-              await file.save(path()!, content)
-              clearEditedContent()
-            }}
-            onViewMode={() => setEditMode(false)}
-          />
+          <div class="h-full flex flex-col">
+            <Show when={showStrip()}>{strip()}</Show>
+            <EditableFile
+              file={path() ?? ""}
+              content={contents()}
+              editedContent={getEditedContent() ?? contents()}
+              review={
+                reviewView()
+                  ? {
+                    busy: busy(),
+                    count: reviewView()!.hunks.length,
+                    text: reviewView()!.text,
+                    hunks: reviewView()!.hunks,
+                    onApprove: approve,
+                    onReject: (idx) => {
+                      void reject(idx)
+                    },
+                    onApproveAll: approveAll,
+                    onRejectAll: () => {
+                      void rejectAll()
+                    },
+                  }
+                  : undefined
+              }
+              onContentChange={setEditedContent}
+              onSelectionChange={setEditSelection}
+              onSave={async (content) => {
+                await file.save(path()!, content)
+                clearEditedContent()
+              }}
+              onViewMode={() => setEditMode(false)}
+            />
+          </div>
         </Match>
         <Match when={state()?.loaded && !editMode()}>
           <ScrollView
