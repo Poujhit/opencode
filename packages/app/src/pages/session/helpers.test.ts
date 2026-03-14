@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { createOpenReviewFile, createOpenSessionFileTab, focusTerminalById, getTabReorderIndex } from "./helpers"
+import { createOpenReviewFile, createOpenSessionFileTab, focusTerminalById, getTabReorderIndex, reviewDrift } from "./helpers"
 
 describe("createOpenReviewFile", () => {
   test("opens and loads selected review file", () => {
@@ -85,5 +85,19 @@ describe("getTabReorderIndex", () => {
 
   test("returns undefined for unknown droppable id", () => {
     expect(getTabReorderIndex(["a", "b", "c"], "a", "missing")).toBeUndefined()
+  })
+})
+
+describe("reviewDrift", () => {
+  test("detects external file drift while review is idle", () => {
+    expect(reviewDrift("live", "shown", false)).toBe(true)
+  })
+
+  test("ignores drift while review is saving", () => {
+    expect(reviewDrift("live", "shown", true)).toBe(false)
+  })
+
+  test("stays stable when live and shown content match", () => {
+    expect(reviewDrift("same", "same", false)).toBe(false)
   })
 })
