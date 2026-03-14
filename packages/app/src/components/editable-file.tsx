@@ -2,10 +2,12 @@ import { createSignal, createEffect, onCleanup, onMount, Show } from "solid-js"
 import { showToast } from "@opencode-ai/ui/toast"
 import { Button } from "@opencode-ai/ui/button"
 import { useFile } from "@/context/file"
+import type { ReviewMark } from "@/context/review-state"
 
 import { EditorView, basicSetup } from "codemirror"
-import { EditorState } from "@codemirror/state"
+import { Compartment, EditorState, StateField } from "@codemirror/state"
 import { oneDark } from "@codemirror/theme-one-dark"
+import { Decoration, WidgetType } from "@codemirror/view"
 
 import { javascript } from "@codemirror/lang-javascript"
 import { html } from "@codemirror/lang-html"
@@ -50,10 +52,208 @@ export interface EditableFileProps {
   file: string
   content: string
   editedContent?: string
+  review?: {
+    busy?: boolean
+    count: number
+    text: string
+    hunks: ReviewMark[]
+    onApprove: (idx: number) => void
+    onReject: (idx: number) => void
+    onApproveAll: VoidFunction
+    onRejectAll: VoidFunction
+  }
   onContentChange?: (content: string) => void
   onSelectionChange?: (range: { startLine: number; endLine: number } | null) => void
   onSave?: (content: string) => Promise<void>
   onViewMode?: () => void
+}
+
+function pos(doc: EditorState["doc"], line: number) {
+  if (doc.lines === 0) return { at: 0, side: 1 as const }
+  if (line > doc.lines) return { at: doc.length, side: 1 as const }
+  const at = doc.line(Math.max(1, line)).from
+  return { at, side: -1 as const }
+}
+
+function range(doc: EditorState["doc"], start: number, end: number) {
+  const from = doc.line(Math.max(1, start)).from
+  if (end >= doc.lines) return { from, to: doc.length }
+  return { from, to: doc.line(end + 1).from }
+}
+
+class HunkWidget extends WidgetType {
+  constructor(
+    private hunk: ReviewMark,
+    private busy: boolean,
+    private approve: (idx: number) => void,
+    private reject: (idx: number) => void,
+  ) {
+    super()
+  }
+
+  eq(other: HunkWidget) {
+    return other.hunk.id === this.hunk.id && other.busy === this.busy
+  }
+
+  toDOM() {
+    const root = document.createElement("div")
+    root.className = "cm-ai-widget"
+
+    const bar = document.createElement("div")
+    bar.className = "cm-ai-actions"
+
+    const approve = document.createElement("button")
+    approve.className = "cm-ai-btn cm-ai-btn-approve"
+    approve.textContent = "Approve"
+    approve.disabled = this.busy
+    approve.onclick = (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      this.approve(this.hunk.idx)
+    }
+
+    const reject = document.createElement("button")
+    reject.className = "cm-ai-btn cm-ai-btn-reject"
+    reject.textContent = "Reject"
+    reject.disabled = this.busy
+    reject.onclick = (event) => {
+      event.preventDefault()
+      event.stopPropagation()
+      this.reject(this.hunk.idx)
+    }
+
+    bar.append(approve, reject)
+    root.append(bar)
+
+    if (this.hunk.del.length > 0) {
+      const box = document.createElement("div")
+      box.className = "cm-ai-diff cm-ai-del"
+      for (const line of this.hunk.del) {
+        const row = document.createElement("div")
+        row.className = "cm-ai-del-line"
+        row.textContent = line.length > 0 ? line : " "
+        box.append(row)
+      }
+      root.append(box)
+    }
+
+    if (this.hunk.add.length > 0) {
+      const box = document.createElement("div")
+      box.className = "cm-ai-diff cm-ai-add"
+      for (const line of this.hunk.add) {
+        const row = document.createElement("div")
+        row.className = "cm-ai-add-line-preview"
+        row.textContent = line.length > 0 ? line : " "
+        box.append(row)
+      }
+      root.append(box)
+    }
+
+    return root
+  }
+
+  ignoreEvent() {
+    return false
+  }
+}
+
+function marks(review: NonNullable<EditableFileProps["review"]>) {
+  const build = (state: EditorState) => {
+    const out = []
+    for (const hunk of review.hunks) {
+      const item = new HunkWidget(hunk, !!review.busy, review.onApprove, review.onReject)
+      const place =
+        hunk.add_start && hunk.add_end
+          ? range(state.doc, hunk.add_start, hunk.add_end)
+          : { from: pos(state.doc, hunk.anchor).at, to: pos(state.doc, hunk.anchor).at }
+      if (hunk.add_start && hunk.add_end) {
+        out.push(Decoration.replace({}).range(place.from, place.to))
+      }
+      out.push(Decoration.widget({ widget: item, block: true, side: -1 }).range(place.from))
+    }
+    return Decoration.set(out, true)
+  }
+
+  return StateField.define({
+    create(state) {
+      return build(state)
+    },
+    update(_, tr) {
+      return build(tr.state)
+    },
+    provide: (field) => EditorView.decorations.from(field),
+  })
+}
+
+function reviewExt(review: EditableFileProps["review"]) {
+  if (!review) return []
+
+  return [
+    marks(review),
+    EditorView.theme({
+      ".cm-ai-widget": {
+        margin: "6px 0",
+        border: "1px solid var(--border-base, #333)",
+        borderRadius: "8px",
+        background: "var(--surface-base, #18181b)",
+        overflow: "hidden",
+        boxShadow: "inset 0 1px 0 rgba(255,255,255,0.03)",
+      },
+      ".cm-ai-actions": {
+        display: "flex",
+        gap: "6px",
+        padding: "6px 8px",
+        borderBottom: "1px solid var(--border-base, #333)",
+        background: "var(--surface-raised-base, #202024)",
+      },
+      ".cm-ai-btn": {
+        border: "1px solid var(--border-base, #333)",
+        borderRadius: "999px",
+        padding: "2px 10px",
+        fontSize: "11px",
+        fontWeight: "600",
+        cursor: "pointer",
+      },
+      ".cm-ai-btn:disabled": {
+        opacity: "0.5",
+        cursor: "not-allowed",
+      },
+      ".cm-ai-btn-approve": {
+        color: "var(--color-success-500, #22c55e)",
+        background: "transparent",
+      },
+      ".cm-ai-btn-reject": {
+        color: "var(--color-danger-500, #ef4444)",
+        background: "transparent",
+      },
+      ".cm-ai-diff": {
+        borderTop: "1px solid var(--border-base, #333)",
+      },
+      ".cm-ai-del": {
+        backgroundColor: "color-mix(in oklab, var(--color-danger-500, #ef4444) 12%, transparent)",
+      },
+      ".cm-ai-del-line": {
+        padding: "0 10px",
+        minHeight: "24px",
+        lineHeight: "24px",
+        color: "var(--text-dimmed, #999)",
+        textDecoration: "line-through",
+        fontFamily: "var(--font-family-mono)",
+        whiteSpace: "pre-wrap",
+      },
+      ".cm-ai-add": {
+        backgroundColor: "color-mix(in oklab, var(--color-success-500, #22c55e) 12%, transparent)",
+      },
+      ".cm-ai-add-line-preview": {
+        padding: "0 10px",
+        minHeight: "24px",
+        lineHeight: "24px",
+        color: "var(--text-base, #ddd)",
+        fontFamily: "var(--font-family-mono)",
+        whiteSpace: "pre-wrap",
+      },
+    }),
+  ]
 }
 
 export function EditableFile(props: EditableFileProps) {
@@ -61,12 +261,16 @@ export function EditableFile(props: EditableFileProps) {
   const [saving, setSaving] = createSignal(false)
   let editorContainer: HTMLDivElement | undefined
   let editorView: EditorView | undefined
+  const markSlot = new Compartment()
+  const readSlot = new Compartment()
+  const editSlot = new Compartment()
 
-  const currentContent = () => props.editedContent ?? props.content
-  const hasChanges = () => currentContent() !== props.content
+  const reviewing = () => !!props.review
+  const currentContent = () => props.review ? props.review.text : props.editedContent ?? props.content
+  const hasChanges = () => !reviewing() && currentContent() !== props.content
 
   const handleSave = async () => {
-    if (!hasChanges() || saving()) return
+    if (reviewing() || !hasChanges() || saving()) return
     setSaving(true)
     try {
       if (props.onSave) {
@@ -87,6 +291,7 @@ export function EditableFile(props: EditableFileProps) {
   }
 
   const handleDiscard = () => {
+    if (reviewing()) return
     props.onContentChange?.(props.content)
     if (editorView) {
       const doc = editorView.state.doc.toString()
@@ -117,8 +322,11 @@ export function EditableFile(props: EditableFileProps) {
     const extensions = [
       basicSetup,
       oneDark,
+      markSlot.of(reviewExt(props.review)),
+      readSlot.of(EditorState.readOnly.of(reviewing())),
+      editSlot.of(EditorView.editable.of(!reviewing())),
       EditorView.updateListener.of((update) => {
-        if (update.docChanged) {
+        if (update.docChanged && !props.review) {
           props.onContentChange?.(update.state.doc.toString())
         }
         if (update.selectionSet || update.docChanged) {
@@ -154,6 +362,17 @@ export function EditableFile(props: EditableFileProps) {
     })
   })
 
+  createEffect(() => {
+    if (!editorView) return
+    editorView.dispatch({
+      effects: [
+        markSlot.reconfigure(reviewExt(props.review)),
+        readSlot.reconfigure(EditorState.readOnly.of(reviewing())),
+        editSlot.reconfigure(EditorView.editable.of(!reviewing())),
+      ],
+    })
+  })
+
   // Sync external content changes into CodeMirror
   createEffect(() => {
     const content = currentContent()
@@ -173,32 +392,55 @@ export function EditableFile(props: EditableFileProps) {
       <div class="editable-file-toolbar">
         <div class="editable-file-toolbar-left">
           <span class="editable-file-mode-label">
-            Edit Mode
+            {reviewing() ? "AI Review" : "Edit Mode"}
+            <Show when={reviewing()}>
+              <span class="editable-file-unsaved"> • {props.review!.count} pending</span>
+            </Show>
             <Show when={hasChanges()}>
               <span class="editable-file-unsaved"> • Unsaved</span>
             </Show>
           </span>
         </div>
         <div class="editable-file-toolbar-right">
-          <Show when={hasChanges()}>
+          <Show when={reviewing()}>
+            <Button
+              variant="ghost"
+              size="small"
+              onClick={() => props.review?.onRejectAll()}
+              disabled={props.review?.busy}
+            >
+              Reject All
+            </Button>
+            <Button
+              variant="primary"
+              size="small"
+              onClick={() => props.review?.onApproveAll()}
+              disabled={props.review?.busy}
+            >
+              Approve All
+            </Button>
+          </Show>
+          <Show when={!reviewing() && hasChanges()}>
             <Button variant="ghost" size="small" onClick={handleDiscard} disabled={saving()}>
               Discard
             </Button>
           </Show>
-          <Show when={hasChanges()}>
+          <Show when={!reviewing() && hasChanges()}>
             <Button variant="primary" size="small" onClick={handleSave} disabled={saving()}>
               {saving() ? "Saving..." : "Save"}
               <kbd class="ml-1 opacity-70 text-[10px] uppercase font-mono border border-current/20 rounded px-1">⌘S</kbd>
             </Button>
           </Show>
-          <Button
-            variant="secondary"
-            size="small"
-            onClick={() => props.onViewMode?.()}
-            title="Switch to view mode"
-          >
-            View
-          </Button>
+          <Show when={!reviewing()}>
+            <Button
+              variant="secondary"
+              size="small"
+              onClick={() => props.onViewMode?.()}
+              title="Switch to view mode"
+            >
+              View
+            </Button>
+          </Show>
         </div>
       </div>
 

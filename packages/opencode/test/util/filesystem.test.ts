@@ -555,4 +555,18 @@ describe("filesystem", () => {
       expect(() => Filesystem.resolve(path.join(file, "child"))).toThrow()
     })
   })
+
+  describe("decodePath()", () => {
+    test("decodes uri-encoded absolute paths", () => {
+      expect(Filesystem.decodePath("/tmp/hello%20world")).toBe("/tmp/hello world")
+    })
+
+    test("decodes base64url absolute paths", () => {
+      expect(Filesystem.decodePath("L3RtcC9oZWxsby13b3JsZA")).toBe("/tmp/hello-world")
+    })
+
+    test("leaves plain relative values alone", () => {
+      expect(Filesystem.decodePath("session")).toBe("session")
+    })
+  })
 })

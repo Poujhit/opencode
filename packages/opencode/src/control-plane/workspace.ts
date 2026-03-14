@@ -11,6 +11,7 @@ import { getAdaptor } from "./adaptors"
 import { WorkspaceInfo } from "./types"
 import { WorkspaceID } from "./schema"
 import { parseSSE } from "./sse"
+import { Filesystem } from "@/util/filesystem"
 
 export namespace Workspace {
   export const Event = {
@@ -39,7 +40,7 @@ export namespace Workspace {
       type: row.type,
       branch: row.branch,
       name: row.name,
-      directory: row.directory,
+      directory: row.directory ? Filesystem.decodePath(row.directory) : null,
       extra: row.extra,
       projectID: row.project_id,
     }

@@ -20,16 +20,16 @@ type Action = "commit" | "commit_push"
 export function summaryText(input?: { files: number; added: number; removed: number }) {
   if (!input) return ""
   return (
-    <>
+    <span class="inline-flex items-center gap-1.5 whitespace-nowrap tabular-nums">
       <span class="font-medium text-icon-success-base" style={{ color: "var(--icon-success-base)" }}>
         +{input.added}
       </span>
-      <span class="inline-block w-2" />
       <span class="font-medium text-icon-critical-base" style={{ color: "var(--icon-critical-base)" }}>
         -{input.removed}
       </span>
-      <span> · {input.files}</span>
-    </>
+      <span class="text-text-muted">·</span>
+      <span>{input.files}</span>
+    </span>
   )
 }
 

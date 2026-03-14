@@ -2,12 +2,29 @@ import { chmod, mkdir, readFile, writeFile } from "fs/promises"
 import { createWriteStream, existsSync, statSync } from "fs"
 import { lookup } from "mime-types"
 import { realpathSync } from "fs"
-import { dirname, join, relative, resolve as pathResolve } from "path"
+import { dirname, isAbsolute, join, relative, resolve as pathResolve } from "path"
 import { Readable } from "stream"
 import { pipeline } from "stream/promises"
 import { Glob } from "./glob"
 
 export namespace Filesystem {
+  function decodeBase64(value: string) {
+    const text = value.replace(/-/g, "+").replace(/_/g, "/")
+    if (!/^[A-Za-z0-9+/]*={0,2}$/.test(text)) return
+    const pad = text.length % 4
+    const full = pad === 0 ? text : text + "=".repeat(4 - pad)
+    const buf = Buffer.from(full, "base64")
+    const next = buf.toString("utf8")
+    if (!next) return
+    const round = buf.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=/g, "")
+    if (round !== value.replace(/=/g, "")) return
+    return next
+  }
+
+  function absolute(p: string) {
+    return isAbsolute(windowsPath(p))
+  }
+
   // Fast sync version for metadata checks
   export async function exists(p: string): Promise<boolean> {
     return existsSync(p)
@@ -139,6 +156,21 @@ export namespace Filesystem {
         .replace(/^\/mnt\/([a-zA-Z])(?:\/|$)/, (_, drive) => `${drive.toUpperCase()}:/`)
     )
   }
+
+  export function decodePath(p: string) {
+    const raw = (() => {
+      try {
+        return decodeURIComponent(p)
+      } catch {
+        return p
+      }
+    })()
+    if (absolute(raw)) return raw
+    const next = decodeBase64(raw)
+    if (!next || !absolute(next)) return raw
+    return next
+  }
+
   export function overlaps(a: string, b: string) {
     const relA = relative(a, b)
     const relB = relative(b, a)
