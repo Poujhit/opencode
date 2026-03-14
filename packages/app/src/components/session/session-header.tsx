@@ -303,7 +303,6 @@ export function SessionHeader() {
         {(mount) => (
           <Portal mount={mount()}>
             <div class="flex items-center gap-2">
-              <StatusPopover />
               <SessionGit />
               <Show when={projectDirectory()}>
                 <div class="hidden xl:flex items-center">

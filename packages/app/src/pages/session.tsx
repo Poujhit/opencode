@@ -1550,7 +1550,8 @@ export default function Page() {
     const task = !next
       ? halt(sessionID)
         .then(() => sdk.client.session.unrevert({ sessionID }))
-        .then(() => {
+        .then((result) => {
+          if (result.data) merge(result.data)
           prompt.reset()
         })
       : halt(sessionID)
@@ -1560,14 +1561,12 @@ export default function Page() {
             messageID: next.id,
           }),
         )
-        .then(() => {
+        .then((result) => {
+          if (result.data) merge(result.data)
           prompt.set(draft(next.id))
         })
 
     return task
-      .then((result) => {
-        if (result.data) merge(result.data)
-      })
       .catch((err) => {
         batch(() => {
           roll(sessionID, last)
