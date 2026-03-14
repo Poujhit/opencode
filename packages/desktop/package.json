@@ -9,6 +9,7 @@
     "predev": "bun ./scripts/predev.ts",
     "dev": "vite",
     "build": "bun run typecheck && vite build",
+    "my-build": "tauri build --no-sign -c src-tauri/tauri.prod.conf.json -c '{\"productName\":\"OpenSesame\",\"mainBinaryName\":\"opensesame\",\"identifier\":\"dev.poujhit.opensesame\"}'",
     "preview": "vite preview",
     "tauri": "tauri"
   },
