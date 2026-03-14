@@ -15,6 +15,7 @@ declare global {
 
 export namespace Installation {
   const log = Log.create({ service: "installation" })
+  const semver = /^\d+\.\d+\.\d+(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$/
 
   async function text(cmd: string[], opts: { cwd?: string; env?: NodeJS.ProcessEnv } = {}) {
     return Process.text(cmd, {
@@ -82,12 +83,16 @@ export namespace Installation {
     }
   }
 
+  export function published(version = VERSION) {
+    return semver.test(version)
+  }
+
   export function isPreview() {
     return CHANNEL !== "latest"
   }
 
   export function isLocal() {
-    return CHANNEL === "local"
+    return CHANNEL === "local" || !published()
   }
 
   export async function method() {

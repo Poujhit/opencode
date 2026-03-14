@@ -15,6 +15,7 @@ import { Flag } from "@/flag/flag"
 import { readdir } from "fs/promises"
 import { git } from "@/util/git"
 import { Protected } from "./protected"
+import { Filesystem } from "@/util/filesystem"
 
 const SUBSCRIBE_TIMEOUT_MS = 10_000
 
@@ -76,16 +77,20 @@ export namespace FileWatcher {
       const cfgIgnores = cfg.watcher?.ignore ?? []
 
       if (Flag.OPENCODE_EXPERIMENTAL_FILEWATCHER) {
-        const pending = w.subscribe(Instance.directory, subscribe, {
-          ignore: [...FileIgnore.PATTERNS, ...cfgIgnores, ...Protected.paths()],
-          backend,
-        })
-        const sub = await withTimeout(pending, SUBSCRIBE_TIMEOUT_MS).catch((err) => {
-          log.error("failed to subscribe to Instance.directory", { error: err })
-          pending.then((s) => s.unsubscribe()).catch(() => {})
-          return undefined
-        })
-        if (sub) subs.push(sub)
+        if (!(await Filesystem.isDir(Instance.directory))) {
+          log.warn("skipping missing Instance.directory", { directory: Instance.directory })
+        } else {
+          const pending = w.subscribe(Instance.directory, subscribe, {
+            ignore: [...FileIgnore.PATTERNS, ...cfgIgnores, ...Protected.paths()],
+            backend,
+          })
+          const sub = await withTimeout(pending, SUBSCRIBE_TIMEOUT_MS).catch((err) => {
+            log.error("failed to subscribe to Instance.directory", { error: err })
+            pending.then((s) => s.unsubscribe()).catch(() => {})
+            return undefined
+          })
+          if (sub) subs.push(sub)
+        }
       }
 
       if (Instance.project.vcs === "git") {

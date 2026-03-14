@@ -32,6 +32,7 @@ import { PermissionNext } from "@/permission/next"
 import { Global } from "@/global"
 import type { LanguageModelV2Usage } from "@ai-sdk/provider"
 import { iife } from "@/util/iife"
+import { Filesystem } from "@/util/filesystem"
 
 export namespace Session {
   const log = Log.create({ service: "session" })
@@ -68,7 +69,7 @@ export namespace Session {
       slug: row.slug,
       projectID: row.project_id,
       workspaceID: row.workspace_id ?? undefined,
-      directory: row.directory,
+      directory: Filesystem.decodePath(row.directory),
       parentID: row.parent_id ?? undefined,
       title: row.title,
       version: row.version,

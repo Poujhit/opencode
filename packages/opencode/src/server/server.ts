@@ -195,15 +195,7 @@ export namespace Server {
         if (c.req.path === "/log") return next()
         const workspaceID = c.req.query("workspace") || c.req.header("x-opencode-workspace")
         const raw = c.req.query("directory") || c.req.header("x-opencode-directory") || process.cwd()
-        const directory = Filesystem.resolve(
-          (() => {
-            try {
-              return decodeURIComponent(raw)
-            } catch {
-              return raw
-            }
-          })(),
-        )
+        const directory = Filesystem.resolve(Filesystem.decodePath(raw))
 
         return WorkspaceContext.provide({
           workspaceID: workspaceID ? WorkspaceID.make(workspaceID) : undefined,
@@ -479,15 +471,7 @@ export namespace Server {
         if (c.req.path === "/log") return next()
         const rawWorkspaceID = c.req.query("workspace") || c.req.header("x-opencode-workspace")
         const raw = c.req.query("directory") || c.req.header("x-opencode-directory") || process.cwd()
-        const directory = Filesystem.resolve(
-          (() => {
-            try {
-              return decodeURIComponent(raw)
-            } catch {
-              return raw
-            }
-          })(),
-        )
+        const directory = Filesystem.resolve(Filesystem.decodePath(raw))
 
         return WorkspaceContext.provide({
           workspaceID: rawWorkspaceID ? WorkspaceID.make(rawWorkspaceID) : undefined,
