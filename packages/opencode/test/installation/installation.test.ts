@@ -8,6 +8,12 @@ afterEach(() => {
 })
 
 describe("installation", () => {
+  test("treats non-semver build versions as unpublished", () => {
+    expect(Installation.published("1.2.3")).toBe(true)
+    expect(Installation.published("1.2.3-beta.1")).toBe(true)
+    expect(Installation.published("0.0.0-codex/plan-ai-edit-diff-workflow-202603140819")).toBe(false)
+  })
+
   test("reads release version from GitHub releases", async () => {
     globalThis.fetch = (async () =>
       new Response(JSON.stringify({ tag_name: "v1.2.3" }), {
