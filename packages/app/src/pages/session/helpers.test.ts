@@ -1,5 +1,14 @@
 import { describe, expect, test } from "bun:test"
-import { createOpenReviewFile, createOpenSessionFileTab, focusTerminalById, getTabReorderIndex, reviewDrift } from "./helpers"
+import { reviewDrift } from "./helpers"
+import { createMemo, createRoot } from "solid-js"
+import { createStore } from "solid-js/store"
+import {
+  createOpenReviewFile,
+  createOpenSessionFileTab,
+  createSessionTabs,
+  focusTerminalById,
+  getTabReorderIndex,
+} from "./helpers"
 
 describe("createOpenReviewFile", () => {
   test("opens and loads selected review file", () => {
@@ -99,5 +108,68 @@ describe("reviewDrift", () => {
 
   test("stays stable when live and shown content match", () => {
     expect(reviewDrift("same", "same", false)).toBe(false)
+  })
+})
+
+describe("createSessionTabs", () => {
+  test("normalizes the effective file tab", () => {
+    createRoot((dispose) => {
+      const [state] = createStore({
+        active: undefined as string | undefined,
+        all: ["file://src/a.ts", "context"],
+      })
+      const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: (tab) => (tab.startsWith("file://") ? tab.slice("file://".length) : undefined),
+        normalizeTab: (tab) => (tab.startsWith("file://") ? `norm:${tab.slice("file://".length)}` : tab),
+      })
+
+      expect(result.activeTab()).toBe("norm:src/a.ts")
+      expect(result.activeFileTab()).toBe("norm:src/a.ts")
+      expect(result.closableTab()).toBe("norm:src/a.ts")
+      dispose()
+    })
+  })
+
+  test("prefers context and review fallbacks when no file tab is active", () => {
+    createRoot((dispose) => {
+      const [state] = createStore({
+        active: undefined as string | undefined,
+        all: ["context"],
+      })
+      const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: () => undefined,
+        normalizeTab: (tab) => tab,
+        review: () => true,
+        hasReview: () => true,
+      })
+
+      expect(result.activeTab()).toBe("context")
+      expect(result.closableTab()).toBe("context")
+      dispose()
+    })
+
+    createRoot((dispose) => {
+      const [state] = createStore({
+        active: undefined as string | undefined,
+        all: [],
+      })
+      const tabs = createMemo(() => ({ active: () => state.active, all: () => state.all }))
+      const result = createSessionTabs({
+        tabs,
+        pathFromTab: () => undefined,
+        normalizeTab: (tab) => tab,
+        review: () => true,
+        hasReview: () => true,
+      })
+
+      expect(result.activeTab()).toBe("review")
+      expect(result.activeFileTab()).toBeUndefined()
+      expect(result.closableTab()).toBeUndefined()
+      dispose()
+    })
   })
 })

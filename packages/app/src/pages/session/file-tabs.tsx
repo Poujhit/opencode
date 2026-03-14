@@ -24,6 +24,7 @@ import { cloneReview, pending } from "@/context/review-state"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { useParams } from "@solidjs/router"
 import { reviewDrift } from "./helpers"
+import { createSessionTabs } from "@/pages/session/helpers"
 
 function FileCommentMenu(props: {
   moreLabel: string
@@ -72,6 +73,11 @@ export function FileTabContent(props: {
   const review = useReview()
   const fileComponent = useFileComponent()
   const { sessionKey, tabs, view } = useSessionLayout()
+  const activeFileTab = createSessionTabs({
+    tabs,
+    pathFromTab: file.pathFromTab,
+    normalizeTab: (tab) => (tab.startsWith("file://") ? file.tab(tab) : tab),
+  }).activeFileTab
 
   // Clear all edited contents when project directory changes
   createEffect(on(() => params.dir, () => { props.setEditedContents(() => ({})) }, { defer: true }))
@@ -245,7 +251,7 @@ export function FileTabContent(props: {
     if (typeof window === "undefined") return
 
     const onKeyDown = (event: KeyboardEvent) => {
-      if (tabs().active() !== props.tab) return
+      if (activeFileTab() !== props.tab) return
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
       if (event.key.toLowerCase() !== "f") return
 
@@ -273,7 +279,7 @@ export function FileTabContent(props: {
     const p = path()
     if (!focus || !p) return
     if (focus.file !== p) return
-    if (tabs().active() !== props.tab) return
+    if (activeFileTab() !== props.tab) return
 
     const target = fileComments().find((comment) => comment.id === focus.id)
     if (!target) return
@@ -393,7 +399,7 @@ export function FileTabContent(props: {
   createEffect(() => {
     const loaded = !!state()?.loaded
     const ready = file.ready()
-    const active = tabs().active() === props.tab
+    const active = activeFileTab() === props.tab
     const restore = (loaded && !prev.loaded) || (ready && !prev.ready) || (active && loaded && !prev.active)
     prev = { loaded, ready, active }
     if (!restore) return
