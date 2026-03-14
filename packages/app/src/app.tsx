@@ -38,6 +38,7 @@ import { NotificationProvider } from "@/context/notification"
 import { PermissionProvider } from "@/context/permission"
 import { usePlatform } from "@/context/platform"
 import { PromptProvider } from "@/context/prompt"
+import { ReviewProvider } from "@/context/review"
 import { ServerConnection, ServerProvider, serverName, useServer } from "@/context/server"
 import { SettingsProvider } from "@/context/settings"
 import { TerminalProvider } from "@/context/terminal"
@@ -114,9 +115,11 @@ function SessionProviders(props: ParentProps) {
     <TerminalProvider>
       <FileProvider>
         <GitProvider>
-          <PromptProvider>
-            <CommentsProvider>{props.children}</CommentsProvider>
-          </PromptProvider>
+          <ReviewProvider>
+            <PromptProvider>
+              <CommentsProvider>{props.children}</CommentsProvider>
+            </PromptProvider>
+          </ReviewProvider>
         </GitProvider>
       </FileProvider>
     </TerminalProvider>
