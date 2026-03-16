@@ -639,7 +639,7 @@ export function FileTabContent(props: {
     })
   })
 
-  // Cmd+H: add highlighted lines to prompt context
+  // Cmd+I: add highlighted lines to prompt context
   const addSelectionToPrompt = () => {
     const p = path()
     if (!p) return
@@ -676,11 +676,11 @@ export function FileTabContent(props: {
     })
   }
 
-  // Cmd+H keyboard shortcut
+  // Cmd+I keyboard shortcut
   createEffect(() => {
     if (typeof window === "undefined") return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "h") return
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "i") return
       event.preventDefault()
       event.stopPropagation()
       addSelectionToPrompt()
