@@ -1,0 +1,164 @@
+{
+  "name": "opencode-v2",
+  "displayName": "opencode v2",
+  "description": "opencode for VS Code Preview",
+  "version": "0.1.0",
+  "publisher": "poujhit",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/anomalyco/opencode"
+  },
+  "license": "MIT",
+  "galleryBanner": {
+    "color": "#111827",
+    "theme": "dark"
+  },
+  "engines": {
+    "vscode": "^1.94.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "activationEvents": [
+    "onView:opencodeV2.chat",
+    "onCommand:opencodeV2.openChat",
+    "onCommand:opencodeV2.startSession",
+    "onCommand:opencodeV2.sendSelection",
+    "onCommand:opencodeV2.sendFile",
+    "onCommand:opencodeV2.reviewSession",
+    "onCommand:opencodeV2.reviewFile",
+    "onCommand:opencodeV2.applyFile",
+    "onCommand:opencodeV2.rejectFile"
+  ],
+  "main": "./dist/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "opencodeV2.openChat",
+        "title": "Open opencode v2 Chat"
+      },
+      {
+        "command": "opencodeV2.startSession",
+        "title": "Start opencode v2 Session"
+      },
+      {
+        "command": "opencodeV2.sendSelection",
+        "title": "Send Selection to opencode v2"
+      },
+      {
+        "command": "opencodeV2.sendFile",
+        "title": "Send File to opencode v2"
+      },
+      {
+        "command": "opencodeV2.reviewSession",
+        "title": "Review opencode v2 Session"
+      },
+      {
+        "command": "opencodeV2.reviewFile",
+        "title": "Review File in opencode v2"
+      },
+      {
+        "command": "opencodeV2.applyFile",
+        "title": "Apply opencode v2 File Change"
+      },
+      {
+        "command": "opencodeV2.rejectFile",
+        "title": "Reject opencode v2 File Change"
+      }
+    ],
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "opencodeV2",
+          "title": "opencode v2",
+          "icon": "images/activity.svg"
+        }
+      ]
+    },
+    "views": {
+      "opencodeV2": [
+        {
+          "id": "opencodeV2.chat",
+          "name": "Chat",
+          "type": "webview"
+        }
+      ]
+    },
+    "menus": {
+      "view/title": [
+        {
+          "command": "opencodeV2.startSession",
+          "when": "view == opencodeV2.chat",
+          "group": "navigation"
+        },
+        {
+          "command": "opencodeV2.reviewSession",
+          "when": "view == opencodeV2.chat",
+          "group": "navigation"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "opencode v2",
+      "properties": {
+        "opencodeV2.cliPath": {
+          "type": "string",
+          "default": "opencode",
+          "description": "Path to the opencode CLI used to launch the managed local server."
+        },
+        "opencodeV2.autoStartServer": {
+          "type": "boolean",
+          "default": true,
+          "description": "Start the managed local opencode server when the v2 chat view opens."
+        },
+        "opencodeV2.openDiffOnChange": {
+          "type": "boolean",
+          "default": false,
+          "description": "Automatically open the session review when new AI file changes arrive for the active workspace."
+        },
+        "opencodeV2.chatLocation": {
+          "type": "string",
+          "enum": [
+            "sidebar",
+            "panel"
+          ],
+          "default": "sidebar",
+          "description": "Open the v2 chat in the sidebar view or a dedicated editor panel."
+        },
+        "opencodeV2.trace.server": {
+          "type": "boolean",
+          "default": false,
+          "description": "Mirror managed server stdout and stderr into an output channel."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "bun run package",
+    "compile": "bun run check-types && bun run lint && node esbuild.js",
+    "watch:esbuild": "node esbuild.js --watch",
+    "watch:tsc": "tsc --noEmit --watch --project tsconfig.json",
+    "package": "bun run check-types && bun run lint && node esbuild.js --production",
+    "compile-tests": "tsc -p . --outDir out",
+    "watch-tests": "tsc -p . -w --outDir out",
+    "pretest": "bun run compile-tests && bun run compile && bun run lint",
+    "check-types": "tsc --noEmit",
+    "lint": "eslint src",
+    "test": "vscode-test"
+  },
+  "dependencies": {
+    "@opencode-ai/sdk": "^1.2.26"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "20.x",
+    "@types/vscode": "^1.94.0",
+    "@typescript-eslint/eslint-plugin": "^8.31.1",
+    "@typescript-eslint/parser": "^8.31.1",
+    "@vscode/test-cli": "^0.0.11",
+    "@vscode/test-electron": "^2.5.2",
+    "esbuild": "^0.25.3",
+    "eslint": "^9.25.1",
+    "typescript": "^5.8.3"
+  }
+}
