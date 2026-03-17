@@ -482,7 +482,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
           msg: box.msg.map((item) => ({
             id: item.info.id,
             role: item.info.role,
-            parts: this.view(item.parts),
+            parts: this.render(item.parts),
             pending: item.info.role === "assistant" && typeof item.info.time.completed !== "number",
             error: item.info.role === "assistant" ? item.info.error?.data?.message : undefined,
           })),
@@ -502,7 +502,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
     };
   }
 
-  private view(parts: Part[]) {
+  private render(parts: Part[]) {
     return parts
       .flatMap((part) => {
         if (part.type === "text") {return [{ kind: "text", text: part.text }];}
@@ -619,10 +619,11 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
         --mono: var(--vscode-editor-font-family, "SFMono-Regular", ui-monospace, monospace);
       }
       * { box-sizing: border-box; }
-      html { height: 100%; }
+      html { height: 100%; overflow: hidden; }
       body {
         margin: 0;
-        min-height: 100%;
+        height: 100%;
+        overflow: hidden;
         background: var(--bg);
         color: var(--fg);
         font: 13px/1.5 var(--vscode-font-family, ui-sans-serif, system-ui, sans-serif);
@@ -632,8 +633,9 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
       }
       main {
         display: grid;
-        grid-template-rows: auto 1fr auto auto;
-        min-height: 100vh;
+        grid-template-rows: auto minmax(0, 1fr) auto auto;
+        height: 100vh;
+        overflow: hidden;
       }
       .top {
         display: flex;
@@ -684,6 +686,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
         background: rgba(255, 255, 255, 0.04);
       }
       .feed {
+        min-height: 0;
         overflow: auto;
         padding: 18px 16px 20px;
         display: grid;
@@ -757,6 +760,8 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
         display: grid;
         gap: 10px;
         background: color-mix(in srgb, var(--bg) 92%, black 8%);
+        max-height: 32vh;
+        overflow: auto;
       }
       .review[hidden] {
         display: none;
@@ -799,6 +804,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
         margin-top: 2px;
       }
       .composer {
+        flex-shrink: 0;
         border-top: 1px solid var(--line);
         padding: 12px 16px 16px;
         background: color-mix(in srgb, var(--bg) 90%, black 10%);
