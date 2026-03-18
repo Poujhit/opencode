@@ -2,9 +2,8 @@ import { Hono } from "hono"
 import { describeRoute, validator, resolver } from "hono-openapi"
 import z from "zod"
 import { File } from "../../file"
-import { Ripgrep } from "../../file/ripgrep"
+import { FileWatcher } from "../../file/watcher"
 import { LSP } from "../../lsp"
-import { Instance } from "../../project/instance"
 import { lazy } from "../../util/lazy"
 import { Bus } from "../../bus"
 import { Log } from "../../util/log"
@@ -22,7 +21,7 @@ export const FileRoutes = lazy(() =>
             description: "Matches",
             content: {
               "application/json": {
-                schema: resolver(Ripgrep.Match.shape.data.array()),
+                schema: resolver(File.SearchResult),
               },
             },
           },
@@ -32,15 +31,89 @@ export const FileRoutes = lazy(() =>
         "query",
         z.object({
           pattern: z.string(),
+          limit: z.coerce.number().int().min(1).max(500).optional(),
+          sensitive: z.enum(["true", "false"]).optional(),
+          word: z.enum(["true", "false"]).optional(),
         }),
       ),
       async (c) => {
-        const pattern = c.req.valid("query").pattern
-        const result = await Ripgrep.search({
-          cwd: Instance.directory,
-          pattern,
-          limit: 10,
+        const query = c.req.valid("query")
+        const result = await File.find({
+          pattern: query.pattern,
+          limit: query.limit,
+          sensitive: query.sensitive === "true",
+          word: query.word === "true",
         })
+        return c.json(result)
+      },
+    )
+    .post(
+      "/find/replace/preview",
+      describeRoute({
+        summary: "Preview replace",
+        description: "Preview plain-text replacements across files in the project.",
+        operationId: "find.replacePreview",
+        responses: {
+          200: {
+            description: "Preview",
+            content: {
+              "application/json": {
+                schema: resolver(File.ReplacePreview),
+              },
+            },
+          },
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          search: z.string(),
+          replace: z.string(),
+          paths: z.string().array().optional(),
+          sensitive: z.boolean().optional(),
+          word: z.boolean().optional(),
+        }),
+      ),
+      async (c) => {
+        const body = c.req.valid("json")
+        const result = await File.preview(body)
+        return c.json(result)
+      },
+    )
+    .post(
+      "/find/replace/apply",
+      describeRoute({
+        summary: "Apply replace",
+        description: "Apply plain-text replacements across files in the project.",
+        operationId: "find.replaceApply",
+        responses: {
+          200: {
+            description: "Apply result",
+            content: {
+              "application/json": {
+                schema: resolver(File.ReplaceApply),
+              },
+            },
+          },
+        },
+      }),
+      validator(
+        "json",
+        z.object({
+          search: z.string(),
+          replace: z.string(),
+          paths: z.string().array().optional(),
+          sensitive: z.boolean().optional(),
+          word: z.boolean().optional(),
+        }),
+      ),
+      async (c) => {
+        const body = c.req.valid("json")
+        const result = await File.replace(body)
+        for (const file of result.files) {
+          await Bus.publish(File.Event.Edited, { file })
+          await Bus.publish(FileWatcher.Event.Updated, { file, event: "change" })
+        }
         return c.json(result)
       },
     )
@@ -227,6 +300,7 @@ export const FileRoutes = lazy(() =>
           log.info("write request", { path: body.path, contentLength: body.content.length })
           await File.write(body.path, body.content)
           await Bus.publish(File.Event.Edited, { file: body.path })
+          await Bus.publish(FileWatcher.Event.Updated, { file: body.path, event: "change" })
           log.info("write success", { path: body.path })
           return c.json({ ok: true })
         } catch (e) {

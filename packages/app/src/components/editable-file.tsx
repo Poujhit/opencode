@@ -1,6 +1,8 @@
 import { createSignal, createEffect, onCleanup, onMount, Show } from "solid-js"
+import { createStore } from "solid-js/store"
 import { showToast } from "@opencode-ai/ui/toast"
 import { Button } from "@opencode-ai/ui/button"
+import type { FileSearchHandle } from "@opencode-ai/ui/file"
 import { useFile } from "@/context/file"
 import type { ReviewMark } from "@/context/review-state"
 
@@ -66,6 +68,9 @@ export interface EditableFileProps {
   onSelectionChange?: (range: { startLine: number; endLine: number } | null) => void
   onSave?: (content: string) => Promise<void>
   onViewMode?: () => void
+  search?: {
+    register: (handle: FileSearchHandle | null) => void
+  }
 }
 
 function pos(doc: EditorState["doc"], line: number) {
@@ -256,18 +261,137 @@ function reviewExt(review: EditableFileProps["review"]) {
   ]
 }
 
+function hits(text: string, query: string) {
+  const value = query.toLowerCase()
+  if (!value) return []
+
+  const out: { from: number; to: number }[] = []
+  const hay = text.toLowerCase()
+  let at = hay.indexOf(value)
+  while (at !== -1) {
+    out.push({ from: at, to: at + query.length })
+    at = hay.indexOf(value, at + query.length)
+  }
+  return out
+}
+
+function findExt(items: { from: number; to: number }[], idx: number) {
+  if (items.length === 0) return EditorView.decorations.of(Decoration.none)
+
+  return EditorView.decorations.of(
+    Decoration.set(
+      items.map((item, at) =>
+        Decoration.mark({
+          class: at === idx ? "cm-find-hit cm-find-hit-current" : "cm-find-hit",
+        }).range(item.from, item.to),
+      ),
+      true,
+    ),
+  )
+}
+
 export function EditableFile(props: EditableFileProps) {
   const file = useFile()
   const [saving, setSaving] = createSignal(false)
+  const [find, setFind] = createStore({
+    open: false,
+    query: "",
+    replace: "",
+    idx: 0,
+    count: 0,
+  })
   let editorContainer: HTMLDivElement | undefined
   let editorView: EditorView | undefined
+  let findInput: HTMLInputElement | undefined
   const markSlot = new Compartment()
   const readSlot = new Compartment()
   const editSlot = new Compartment()
+  const findSlot = new Compartment()
 
   const reviewing = () => !!props.review
   const currentContent = () => props.review ? props.review.text : props.editedContent ?? props.content
   const hasChanges = () => !reviewing() && currentContent() !== props.content
+
+  const syncFind = (input?: { reset?: boolean; scroll?: boolean }) => {
+    if (!editorView) return
+
+    const query = find.query.trim()
+    const items = query ? hits(editorView.state.doc.toString(), query) : []
+    const idx = items.length === 0 ? 0 : Math.min(input?.reset ? 0 : find.idx, items.length - 1)
+
+    if (find.count !== items.length) setFind("count", items.length)
+    if (find.idx !== idx) setFind("idx", idx)
+
+    editorView.dispatch({
+      effects: findSlot.reconfigure(findExt(items, idx)),
+    })
+
+    const item = input?.scroll ? items[idx] : undefined
+    if (!item) return
+    editorView.dispatch({
+      selection: { anchor: item.from, head: item.to },
+      scrollIntoView: true,
+    })
+  }
+
+  const openFind = (query?: string) => {
+    if (query !== undefined && query !== find.query) setFind("query", query)
+    if (!find.open) setFind("open", true)
+    requestAnimationFrame(() => {
+      syncFind({ reset: query !== undefined, scroll: true })
+      findInput?.focus()
+      findInput?.select()
+    })
+  }
+
+  const closeFind = () => {
+    setFind({
+      open: false,
+      query: "",
+      replace: "",
+      idx: 0,
+      count: 0,
+    })
+    if (!editorView) return
+    editorView.dispatch({
+      effects: findSlot.reconfigure(findExt([], 0)),
+    })
+  }
+
+  const step = (dir: 1 | -1) => {
+    if (!find.open || !editorView || find.count === 0) return
+    setFind("idx", (find.idx + dir + find.count) % find.count)
+    requestAnimationFrame(() => syncFind({ scroll: true }))
+  }
+
+  const swap = (all: boolean) => {
+    if (reviewing() || !editorView) return
+
+    const query = find.query.trim()
+    if (!query) return
+
+    const next = find.replace
+    const text = editorView.state.doc.toString()
+    const items = hits(text, query)
+    if (items.length === 0) return
+
+    if (all) {
+      const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi")
+      editorView.dispatch({
+        changes: { from: 0, to: text.length, insert: text.replace(re, next) },
+      })
+      setFind("idx", 0)
+      requestAnimationFrame(() => syncFind({ reset: true, scroll: true }))
+      return
+    }
+
+    const item = items[Math.min(find.idx, items.length - 1)]
+    if (!item) return
+    editorView.dispatch({
+      changes: { from: item.from, to: item.to, insert: next },
+    })
+    requestAnimationFrame(() => syncFind({ scroll: true }))
+  }
 
   const handleSave = async () => {
     if (reviewing() || !hasChanges() || saving()) return
@@ -325,6 +449,7 @@ export function EditableFile(props: EditableFileProps) {
       markSlot.of(reviewExt(props.review)),
       readSlot.of(EditorState.readOnly.of(reviewing())),
       editSlot.of(EditorView.editable.of(!reviewing())),
+      findSlot.of(findExt([], 0)),
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !props.review) {
           props.onContentChange?.(update.state.doc.toString())
@@ -350,6 +475,14 @@ export function EditableFile(props: EditableFileProps) {
           backgroundColor: "transparent",
         },
         ".cm-activeLineGutter": { backgroundColor: "transparent" },
+        ".cm-find-hit": {
+          backgroundColor: "color-mix(in oklab, var(--color-warning-500, #f59e0b) 28%, transparent)",
+          borderRadius: "2px",
+        },
+        ".cm-find-hit-current": {
+          backgroundColor: "color-mix(in oklab, var(--color-warning-500, #f59e0b) 52%, transparent)",
+          boxShadow: "inset 0 0 0 1px color-mix(in oklab, white 18%, transparent)",
+        },
       }),
     ]
 
@@ -374,6 +507,25 @@ export function EditableFile(props: EditableFileProps) {
   })
 
   // Sync external content changes into CodeMirror
+  createEffect(() => {
+    find.open
+    find.query
+    find.idx
+    currentContent()
+    if (!editorView) return
+    syncFind()
+  })
+
+  createEffect(() => {
+    const search = props.search
+    if (!search) return
+    const handle = {
+      focus: (query?: string) => openFind(query),
+    } satisfies FileSearchHandle
+    search.register(handle)
+    onCleanup(() => search.register(null))
+  })
+
   createEffect(() => {
     const content = currentContent()
     if (!editorView) return
@@ -432,6 +584,11 @@ export function EditableFile(props: EditableFileProps) {
             </Button>
           </Show>
           <Show when={!reviewing()}>
+            <Button variant="ghost" size="small" onClick={() => openFind()} title="Find in file">
+              Find
+            </Button>
+          </Show>
+          <Show when={!reviewing()}>
             <Button
               variant="secondary"
               size="small"
@@ -443,6 +600,88 @@ export function EditableFile(props: EditableFileProps) {
           </Show>
         </div>
       </div>
+
+      <Show when={find.open}>
+        <div class="editable-file-find">
+          <div class="editable-file-find-frame">
+            <div class="editable-file-find-main">
+              <input
+                ref={findInput}
+                value={find.query}
+                placeholder="Find"
+                class="editable-file-find-input editable-file-find-input-main"
+                autocomplete="off"
+                autocapitalize="off"
+                autocorrect="off"
+                spellcheck={false}
+                onInput={(event) => setFind("query", event.currentTarget.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Escape") {
+                    event.preventDefault()
+                    closeFind()
+                    return
+                  }
+                  if (event.key !== "Enter") return
+                  event.preventDefault()
+                  step(event.shiftKey ? -1 : 1)
+                }}
+              />
+              <Show when={!reviewing()}>
+                <input
+                  value={find.replace}
+                  placeholder="Replace"
+                  class="editable-file-find-input"
+                  autocomplete="off"
+                  autocapitalize="off"
+                  autocorrect="off"
+                  spellcheck={false}
+                  onInput={(event) => setFind("replace", event.currentTarget.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Escape") {
+                      event.preventDefault()
+                      closeFind()
+                      return
+                    }
+                    if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "enter") return
+                    event.preventDefault()
+                    swap(false)
+                  }}
+                />
+              </Show>
+            </div>
+            <div class="editable-file-find-side">
+              <div class="editable-file-find-count">{find.count ? `${find.idx + 1}/${find.count}` : "0/0"}</div>
+              <button type="button" class="editable-file-find-btn" disabled={find.count === 0} onClick={() => step(1)}>
+                Next
+              </button>
+              <button type="button" class="editable-file-find-btn" disabled={find.count === 0} onClick={() => step(-1)}>
+                Prev
+              </button>
+              <Show when={!reviewing()}>
+                <button
+                  type="button"
+                  class="editable-file-find-btn"
+                  disabled={find.count === 0 || !find.replace.trim()}
+                  onClick={() => swap(false)}
+                >
+                  Replace
+                </button>
+                <button
+                  type="button"
+                  class="editable-file-find-btn"
+                  disabled={find.count === 0 || !find.replace.trim()}
+                  onClick={() => swap(true)}
+                >
+                  All
+                </button>
+              </Show>
+              <button type="button" class="editable-file-find-close" onClick={closeFind} aria-label="Close find">
+                ×
+              </button>
+            </div>
+          </div>
+        </div>
+      </Show>
 
       <div class="editable-file-editor" ref={editorContainer} />
     </div>

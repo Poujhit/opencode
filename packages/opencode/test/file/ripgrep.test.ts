@@ -51,4 +51,51 @@ describe("file.ripgrep", () => {
 
     expect(hits).toEqual([])
   })
+
+  test("search is case-insensitive by default", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "match.ts"), "gemini\nGemini\nGEMINI\n")
+      },
+    })
+
+    const hits = await Ripgrep.search({
+      cwd: tmp.path,
+      pattern: "gemini",
+    })
+
+    expect(hits).toHaveLength(3)
+  })
+
+  test("search supports case-sensitive matches", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "match.ts"), "gemini\nGemini\nGEMINI\n")
+      },
+    })
+
+    const hits = await Ripgrep.search({
+      cwd: tmp.path,
+      pattern: "Gemini",
+      sensitive: true,
+    })
+
+    expect(hits).toHaveLength(1)
+  })
+
+  test("search supports whole-word matches", async () => {
+    await using tmp = await tmpdir({
+      init: async (dir) => {
+        await Bun.write(path.join(dir, "match.ts"), "gemini\ngeminiService\n")
+      },
+    })
+
+    const hits = await Ripgrep.search({
+      cwd: tmp.path,
+      pattern: "gemini",
+      word: true,
+    })
+
+    expect(hits).toHaveLength(1)
+  })
 })

@@ -4,6 +4,8 @@ import { same } from "@/utils/same"
 
 const emptyTabs: string[] = []
 
+export const FILE_FIND_EVENT = "opencode:file-find"
+
 type Tabs = {
   active: Accessor<string | undefined>
   all: Accessor<string[]>
@@ -143,8 +145,8 @@ export const getTabReorderIndex = (tabs: readonly string[], from: string, to: st
   return toIndex
 }
 
-export const reviewDrift = (live: string, shown: string, busy: boolean) => {
-  return !busy && live !== shown
+export const reviewDrift = (live: string, shown: string, busy: boolean, ready: boolean) => {
+  return ready && !busy && live !== shown
 }
 
 export const createSizing = () => {

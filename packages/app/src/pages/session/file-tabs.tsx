@@ -20,10 +20,10 @@ import { usePrompt } from "@/context/prompt"
 import { useReview } from "@/context/review"
 import { getSessionHandoff } from "@/pages/session/handoff"
 import { EditableFile } from "@/components/editable-file"
-import { cloneReview, pending } from "@/context/review-state"
+import { cloneReview, pending, reviewSig } from "@/context/review-state"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { useParams } from "@solidjs/router"
-import { reviewDrift } from "./helpers"
+import { FILE_FIND_EVENT, reviewDrift } from "./helpers"
 import { createSessionTabs } from "@/pages/session/helpers"
 
 function FileCommentMenu(props: {
@@ -93,6 +93,13 @@ export function FileTabContent(props: {
     register: (handle: FileSearchHandle | null) => {
       find = handle
     },
+  }
+
+  const focusFind = () => {
+    const handle = find
+    if (!handle) return false
+    requestAnimationFrame(() => handle.focus())
+    return true
   }
 
   const path = createMemo(() => file.pathFromTab(props.tab))
@@ -183,6 +190,7 @@ export function FileTabContent(props: {
     commenting: null as SelectedLineRange | null,
     selected: null as SelectedLineRange | null,
   })
+  const [seen, setSeen] = createStore<Record<string, string>>({})
 
   const syncSelected = (range: SelectedLineRange | null) => {
     const p = path()
@@ -254,14 +262,21 @@ export function FileTabContent(props: {
       if (activeFileTab() !== props.tab) return
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
       if (event.key.toLowerCase() !== "f") return
+      if (!focusFind()) return
 
       event.preventDefault()
       event.stopPropagation()
-      find?.focus()
+    }
+
+    const onFind = () => {
+      if (activeFileTab() !== props.tab) return
+      focusFind()
     }
 
     window.addEventListener("keydown", onKeyDown, { capture: true })
+    window.addEventListener(FILE_FIND_EVENT, onFind)
     onCleanup(() => window.removeEventListener("keydown", onKeyDown, { capture: true }))
+    onCleanup(() => window.removeEventListener(FILE_FIND_EVENT, onFind))
   })
 
   createEffect(
@@ -624,11 +639,25 @@ export function FileTabContent(props: {
 
   createEffect(() => {
     const p = path()
+    const cur = item()
     const view = reviewView()
-    if (!p || !view || !state()?.loaded) return
-    if (!reviewDrift(contents(), view.text, busy())) return
+    if (!p || !cur || !view || !state()?.loaded) return
+
+    const sig = reviewSig(cur)
+    if (contents() === view.text) {
+      if (seen[p] !== sig) setSeen(p, sig)
+      return
+    }
+
+    if (!reviewDrift(contents(), view.text, busy(), seen[p] === sig)) return
 
     // TODO: Rebase or auto-resolve review hunks against live disk edits instead of clearing them.
+    setSeen((map) => {
+      if (!(p in map)) return map
+      const next = { ...map }
+      delete next[p]
+      return next
+    })
     review.clear(p)
     clearEditedContent()
     void file.load(p, { force: true }).finally(() => {
@@ -639,7 +668,7 @@ export function FileTabContent(props: {
     })
   })
 
-  // Cmd+H: add highlighted lines to prompt context
+  // Cmd+I: add highlighted lines to prompt context
   const addSelectionToPrompt = () => {
     const p = path()
     if (!p) return
@@ -676,11 +705,11 @@ export function FileTabContent(props: {
     })
   }
 
-  // Cmd+H keyboard shortcut
+  // Cmd+I keyboard shortcut
   createEffect(() => {
     if (typeof window === "undefined") return
     const onKeyDown = (event: KeyboardEvent) => {
-      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "h") return
+      if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "i") return
       event.preventDefault()
       event.stopPropagation()
       addSelectionToPrompt()
@@ -730,6 +759,7 @@ export function FileTabContent(props: {
               file={path() ?? ""}
               content={contents()}
               editedContent={getEditedContent() ?? contents()}
+              search={search}
               review={
                 reviewView()
                   ? {

@@ -1,0 +1,37 @@
+#!/usr/bin/env bash
+
+minor=false
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --minor) minor=true; shift 1;;
+    *) echo "Unknown parameter: $1"; exit 1;;
+  esac
+done
+
+git fetch --force --tags
+latest_tag=$(git tag --sort=committerdate | grep -E '^vscode-v2-v[0-9]+\.[0-9]+\.[0-9]+$' | tail -1)
+if [ -z "$latest_tag" ]; then
+    latest_tag="vscode-v2-v0.0.0"
+fi
+
+echo "Latest tag: $latest_tag"
+
+version=${latest_tag#vscode-v2-v}
+IFS='.' read -ra parts <<< "$version"
+
+major=${parts[0]:-0}
+minor_no=${parts[1]:-0}
+patch=${parts[2]:-0}
+
+if [ "$minor" = true ]; then
+    minor_no=$((minor_no + 1))
+    patch=0
+else
+    patch=$((patch + 1))
+fi
+
+new_tag="vscode-v2-v${major}.${minor_no}.${patch}"
+echo "New version: $new_tag"
+
+git tag "$new_tag"
+git push --tags

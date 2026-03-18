@@ -17,7 +17,7 @@ import { DialogSelectMcp } from "@/components/dialog-select-mcp"
 import { DialogFork } from "@/components/dialog-fork"
 import { showToast } from "@opencode-ai/ui/toast"
 import { findLast } from "@opencode-ai/util/array"
-import { createSessionTabs } from "@/pages/session/helpers"
+import { createSessionTabs, FILE_FIND_EVENT } from "@/pages/session/helpers"
 import { extractPromptFromParts } from "@/utils/prompt"
 import { UserMessage } from "@opencode-ai/sdk/v2"
 import { useSessionLayout } from "@/pages/session/session-layout"
@@ -258,6 +258,32 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
         keybind: "mod+p",
         slash: "open",
         onSelect: () => dialog.show(() => <DialogSelectFile onOpenFile={showAllFiles} />),
+      }),
+      fileCommand({
+        id: "search.project",
+        title: "Search in workspace",
+        description: "Search and replace text across files in the active workspace",
+        keybind: "mod+shift+f",
+        onSelect: () => {
+          layout.fileTree.open()
+          layout.fileTree.setTab("search")
+          requestAnimationFrame(() => {
+            const input = document.querySelector('[data-file-search-input="project"]')
+            if (!(input instanceof HTMLInputElement)) return
+            input.focus()
+            input.select()
+          })
+        },
+      }),
+      fileCommand({
+        id: "search.file",
+        title: "Find in file",
+        description: "Search in the active file tab",
+        keybind: "mod+f",
+        disabled: !activeFileTab(),
+        onSelect: () => {
+          window.dispatchEvent(new Event(FILE_FIND_EVENT))
+        },
       }),
       fileCommand({
         id: "tab.close",
