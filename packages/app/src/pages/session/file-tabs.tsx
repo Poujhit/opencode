@@ -20,7 +20,7 @@ import { usePrompt } from "@/context/prompt"
 import { useReview } from "@/context/review"
 import { getSessionHandoff } from "@/pages/session/handoff"
 import { EditableFile } from "@/components/editable-file"
-import { cloneReview, pending } from "@/context/review-state"
+import { cloneReview, pending, reviewSig } from "@/context/review-state"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { useParams } from "@solidjs/router"
 import { reviewDrift } from "./helpers"
@@ -183,6 +183,7 @@ export function FileTabContent(props: {
     commenting: null as SelectedLineRange | null,
     selected: null as SelectedLineRange | null,
   })
+  const [seen, setSeen] = createStore<Record<string, string>>({})
 
   const syncSelected = (range: SelectedLineRange | null) => {
     const p = path()
@@ -624,11 +625,25 @@ export function FileTabContent(props: {
 
   createEffect(() => {
     const p = path()
+    const cur = item()
     const view = reviewView()
-    if (!p || !view || !state()?.loaded) return
-    if (!reviewDrift(contents(), view.text, busy())) return
+    if (!p || !cur || !view || !state()?.loaded) return
+
+    const sig = reviewSig(cur)
+    if (contents() === view.text) {
+      if (seen[p] !== sig) setSeen(p, sig)
+      return
+    }
+
+    if (!reviewDrift(contents(), view.text, busy(), seen[p] === sig)) return
 
     // TODO: Rebase or auto-resolve review hunks against live disk edits instead of clearing them.
+    setSeen((map) => {
+      if (!(p in map)) return map
+      const next = { ...map }
+      delete next[p]
+      return next
+    })
     review.clear(p)
     clearEditedContent()
     void file.load(p, { force: true }).finally(() => {
