@@ -339,10 +339,15 @@ export namespace Ripgrep {
     limit?: number
     follow?: boolean
     literal?: boolean
+    sensitive?: boolean
+    word?: boolean
   }) {
     const args = [`${await filepath()}`, "--json", "--hidden", "--glob=!.git/*"]
     if (input.follow) args.push("--follow")
     if (input.literal !== false) args.push("--fixed-strings")
+    if (input.sensitive) args.push("--case-sensitive")
+    else args.push("--ignore-case")
+    if (input.word) args.push("--word-regexp")
 
     if (input.glob) {
       for (const g of input.glob) {

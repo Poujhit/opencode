@@ -32,6 +32,8 @@ export const FileRoutes = lazy(() =>
         z.object({
           pattern: z.string(),
           limit: z.coerce.number().int().min(1).max(500).optional(),
+          sensitive: z.enum(["true", "false"]).optional(),
+          word: z.enum(["true", "false"]).optional(),
         }),
       ),
       async (c) => {
@@ -39,6 +41,8 @@ export const FileRoutes = lazy(() =>
         const result = await File.find({
           pattern: query.pattern,
           limit: query.limit,
+          sensitive: query.sensitive === "true",
+          word: query.word === "true",
         })
         return c.json(result)
       },
@@ -66,6 +70,8 @@ export const FileRoutes = lazy(() =>
           search: z.string(),
           replace: z.string(),
           paths: z.string().array().optional(),
+          sensitive: z.boolean().optional(),
+          word: z.boolean().optional(),
         }),
       ),
       async (c) => {
@@ -97,6 +103,8 @@ export const FileRoutes = lazy(() =>
           search: z.string(),
           replace: z.string(),
           paths: z.string().array().optional(),
+          sensitive: z.boolean().optional(),
+          word: z.boolean().optional(),
         }),
       ),
       async (c) => {

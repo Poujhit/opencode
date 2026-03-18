@@ -722,12 +722,22 @@ export namespace File {
     return out
   }
 
-  function replaceAll(text: string, search: string, next: string) {
-    const parts = text.split(search)
-    if (parts.length === 1) return
+  function escape(text: string) {
+    return text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
+  }
+
+  function replaceAll(text: string, search: string, next: string, sensitive?: boolean, word?: boolean) {
+    const body = escape(search)
+    const re = new RegExp(word ? `(?<![A-Za-z0-9_])${body}(?![A-Za-z0-9_])` : body, sensitive ? "g" : "gi")
+    let count = 0
+    const out = text.replace(re, () => {
+      count++
+      return next
+    })
+    if (count === 0) return
     return {
-      text: parts.join(next),
-      count: parts.length - 1,
+      text: out,
+      count,
     }
   }
 
@@ -767,18 +777,26 @@ export namespace File {
     return runPromiseInstance(FileService.use((s) => s.list(dir)))
   }
 
-  export async function find(input: { pattern: string; limit?: number }) {
+  export async function find(input: { pattern: string; limit?: number; sensitive?: boolean; word?: boolean }) {
     const pattern = guardQuery(input.pattern)
     const hits = await Ripgrep.search({
       cwd: Instance.directory,
       pattern,
       limit: input.limit,
       literal: true,
+      sensitive: input.sensitive,
+      word: input.word,
     })
     return group(hits)
   }
 
-  export async function preview(input: { search: string; replace: string; paths?: string[] }) {
+  export async function preview(input: {
+    search: string
+    replace: string
+    paths?: string[]
+    sensitive?: boolean
+    word?: boolean
+  }) {
     const search = guardQuery(input.search)
     const next = guardReplace(input.replace)
     const allow = input.paths?.length ? new Set(input.paths.map((item) => item.replaceAll("\\", "/"))) : undefined
@@ -786,6 +804,8 @@ export namespace File {
       cwd: Instance.directory,
       pattern: search,
       literal: true,
+      sensitive: input.sensitive,
+      word: input.word,
     })
 
     const map = new Map<string, ReplaceItem[]>()
@@ -824,12 +844,18 @@ export namespace File {
     }
   }
 
-  export async function replace(input: { search: string; replace: string; paths?: string[] }) {
+  export async function replace(input: {
+    search: string
+    replace: string
+    paths?: string[]
+    sensitive?: boolean
+    word?: boolean
+  }) {
     const search = guardQuery(input.search)
     const next = guardReplace(input.replace)
     const paths = input.paths?.length
       ? input.paths.map((item) => item.replaceAll("\\", "/"))
-      : (await preview({ search, replace: next })).files.map((item) => item.path)
+      : (await preview({ search, replace: next, sensitive: input.sensitive, word: input.word })).files.map((item) => item.path)
 
     const files: string[] = []
     let replacements = 0
@@ -843,7 +869,7 @@ export namespace File {
       const text = await Filesystem.readText(full).catch(() => undefined)
       if (text === undefined) continue
 
-      const out = replaceAll(text, search, next)
+      const out = replaceAll(text, search, next, input.sensitive, input.word)
       if (!out || out.count === 0) continue
 
       await Filesystem.write(full, out.text)
