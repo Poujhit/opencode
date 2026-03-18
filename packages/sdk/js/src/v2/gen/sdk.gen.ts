@@ -2970,6 +2970,8 @@ export class Find extends HeyApiClient {
       workspace?: string
       pattern: string
       limit?: number
+      sensitive?: "true" | "false"
+      word?: "true" | "false"
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2982,6 +2984,8 @@ export class Find extends HeyApiClient {
             { in: "query", key: "workspace" },
             { in: "query", key: "pattern" },
             { in: "query", key: "limit" },
+            { in: "query", key: "sensitive" },
+            { in: "query", key: "word" },
           ],
         },
       ],
@@ -3005,6 +3009,8 @@ export class Find extends HeyApiClient {
       search?: string
       replace?: string
       paths?: Array<string>
+      sensitive?: boolean
+      word?: boolean
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3018,6 +3024,8 @@ export class Find extends HeyApiClient {
             { in: "body", key: "search" },
             { in: "body", key: "replace" },
             { in: "body", key: "paths" },
+            { in: "body", key: "sensitive" },
+            { in: "body", key: "word" },
           ],
         },
       ],
@@ -3046,6 +3054,8 @@ export class Find extends HeyApiClient {
       search?: string
       replace?: string
       paths?: Array<string>
+      sensitive?: boolean
+      word?: boolean
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -3059,6 +3069,8 @@ export class Find extends HeyApiClient {
             { in: "body", key: "search" },
             { in: "body", key: "replace" },
             { in: "body", key: "paths" },
+            { in: "body", key: "sensitive" },
+            { in: "body", key: "word" },
           ],
         },
       ],

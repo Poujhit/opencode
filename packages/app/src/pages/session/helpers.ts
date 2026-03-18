@@ -4,6 +4,8 @@ import { same } from "@/utils/same"
 
 const emptyTabs: string[] = []
 
+export const FILE_FIND_EVENT = "opencode:file-find"
+
 type Tabs = {
   active: Accessor<string | undefined>
   all: Accessor<string[]>

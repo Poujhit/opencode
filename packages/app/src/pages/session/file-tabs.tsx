@@ -23,7 +23,7 @@ import { EditableFile } from "@/components/editable-file"
 import { cloneReview, pending, reviewSig } from "@/context/review-state"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { useParams } from "@solidjs/router"
-import { reviewDrift } from "./helpers"
+import { FILE_FIND_EVENT, reviewDrift } from "./helpers"
 import { createSessionTabs } from "@/pages/session/helpers"
 
 function FileCommentMenu(props: {
@@ -93,6 +93,13 @@ export function FileTabContent(props: {
     register: (handle: FileSearchHandle | null) => {
       find = handle
     },
+  }
+
+  const focusFind = () => {
+    const handle = find
+    if (!handle) return false
+    requestAnimationFrame(() => handle.focus())
+    return true
   }
 
   const path = createMemo(() => file.pathFromTab(props.tab))
@@ -255,14 +262,21 @@ export function FileTabContent(props: {
       if (activeFileTab() !== props.tab) return
       if (!(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey) return
       if (event.key.toLowerCase() !== "f") return
+      if (!focusFind()) return
 
       event.preventDefault()
       event.stopPropagation()
-      find?.focus()
+    }
+
+    const onFind = () => {
+      if (activeFileTab() !== props.tab) return
+      focusFind()
     }
 
     window.addEventListener("keydown", onKeyDown, { capture: true })
+    window.addEventListener(FILE_FIND_EVENT, onFind)
     onCleanup(() => window.removeEventListener("keydown", onKeyDown, { capture: true }))
+    onCleanup(() => window.removeEventListener(FILE_FIND_EVENT, onFind))
   })
 
   createEffect(

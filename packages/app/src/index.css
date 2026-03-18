@@ -120,46 +120,132 @@
 }
 
 .editable-file-find {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 12px;
+  padding: 8px 12px;
   border-bottom: 1px solid var(--border-base, #333);
-  background: var(--surface-raised-base, #202024);
+  background: color-mix(in oklab, var(--surface-raised-base, #202024) 92%, black);
+}
+
+.editable-file-find-frame {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in oklab, var(--border-base, #333) 85%, white 8%);
+  border-radius: 10px;
+  background: color-mix(in oklab, var(--surface-base, #18181b) 94%, transparent);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
+}
+
+.editable-file-find-main {
+  display: flex;
+  flex: 1;
+  min-width: 0;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.editable-file-find-side {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
   flex-wrap: wrap;
+  justify-content: flex-end;
 }
 
 .editable-file-find-input {
+  width: 100%;
   min-width: 0;
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--border-base, #333);
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in oklab, var(--border-base, #333) 88%, white 8%);
   border-radius: 8px;
-  background: color-mix(in oklab, var(--surface-base, #18181b) 92%, transparent);
+  background: color-mix(in oklab, var(--surface-raised-base, #202024) 86%, black);
   color: var(--text-strong, #fff);
   font-size: 13px;
+  outline: none;
+  transition:
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    background-color 120ms ease;
+}
+
+.editable-file-find-input::placeholder {
+  color: var(--text-dimmed, #888);
+}
+
+.editable-file-find-input:focus {
+  border-color: color-mix(in oklab, var(--color-warning-500, #f59e0b) 38%, var(--border-base, #333));
+  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-warning-500, #f59e0b) 24%, transparent);
+}
+
+.editable-file-find-input-main {
+  background: color-mix(in oklab, var(--surface-raised-base, #202024) 74%, black);
 }
 
 .editable-file-find-count {
-  min-width: 48px;
+  min-width: 44px;
+  height: 34px;
+  padding: 0 10px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   font-size: 12px;
   color: var(--text-dimmed, #888);
   text-align: center;
+  border: 1px solid color-mix(in oklab, var(--border-base, #333) 88%, white 8%);
+  border-radius: 8px;
+  background: color-mix(in oklab, var(--surface-raised-base, #202024) 78%, black);
 }
 
 .editable-file-find-btn {
-  height: 30px;
-  padding: 0 10px;
-  border: 1px solid var(--border-base, #333);
+  height: 34px;
+  padding: 0 12px;
+  border: 1px solid color-mix(in oklab, var(--border-base, #333) 88%, white 8%);
   border-radius: 8px;
-  background: transparent;
+  background: color-mix(in oklab, var(--surface-raised-base, #202024) 76%, black);
   color: var(--text-base, #ddd);
   font-size: 12px;
+  font-weight: 500;
+  transition:
+    border-color 120ms ease,
+    background-color 120ms ease,
+    color 120ms ease;
+}
+
+.editable-file-find-btn:hover:not(:disabled) {
+  background: color-mix(in oklab, var(--surface-raised-base, #202024) 62%, white 4%);
+  border-color: color-mix(in oklab, var(--border-base, #333) 60%, white 16%);
 }
 
 .editable-file-find-btn:disabled {
   opacity: 0.45;
   pointer-events: none;
+}
+
+.editable-file-find-close {
+  width: 34px;
+  height: 34px;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--text-dimmed, #888);
+  font-size: 24px;
+  line-height: 1;
+}
+
+.editable-file-find-close:hover {
+  background: color-mix(in oklab, var(--surface-raised-base, #202024) 64%, white 4%);
+  color: var(--text-strong, #fff);
+}
+
+@media (max-width: 900px) {
+  .editable-file-find-frame {
+    flex-direction: column;
+  }
+
+  .editable-file-find-side {
+    justify-content: flex-start;
+  }
 }
 
 

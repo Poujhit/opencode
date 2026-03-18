@@ -297,12 +297,23 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       setSelectedLines,
       searchFiles: (query: string) => search(query, "false"),
       searchFilesAndDirectories: (query: string) => search(query, "true"),
-      searchText: (pattern: string, limit?: number) =>
-        sdk.client.find.text({ pattern, ...(limit ? { limit } : {}) }).then((x) => x.data),
-      previewReplace: (search: string, replace: string, paths?: string[]) =>
-        sdk.client.find.replacePreview({ search, replace, ...(paths?.length ? { paths } : {}) }).then((x) => x.data),
-      applyReplace: (search: string, replace: string, paths?: string[]) =>
-        sdk.client.find.replaceApply({ search, replace, ...(paths?.length ? { paths } : {}) }).then((x) => x.data),
+      searchText: (pattern: string, limit?: number, sensitive = false, word = false) =>
+        sdk.client.find
+          .text({
+            pattern,
+            sensitive: sensitive ? "true" : "false",
+            word: word ? "true" : "false",
+            ...(limit ? { limit } : {}),
+          })
+          .then((x) => x.data),
+      previewReplace: (search: string, replace: string, paths?: string[], sensitive = false, word = false) =>
+        sdk.client.find
+          .replacePreview({ search, replace, sensitive, word, ...(paths?.length ? { paths } : {}) })
+          .then((x) => x.data),
+      applyReplace: (search: string, replace: string, paths?: string[], sensitive = false, word = false) =>
+        sdk.client.find
+          .replaceApply({ search, replace, sensitive, word, ...(paths?.length ? { paths } : {}) })
+          .then((x) => x.data),
     }
   },
 })

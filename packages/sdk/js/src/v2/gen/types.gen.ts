@@ -4297,6 +4297,8 @@ export type FindTextData = {
     workspace?: string
     pattern: string
     limit?: number
+    sensitive?: "true" | "false"
+    word?: "true" | "false"
   }
   url: "/find"
 }
@@ -4315,6 +4317,8 @@ export type FindReplacePreviewData = {
     search: string
     replace: string
     paths?: Array<string>
+    sensitive?: boolean
+    word?: boolean
   }
   path?: never
   query?: {
@@ -4338,6 +4342,8 @@ export type FindReplaceApplyData = {
     search: string
     replace: string
     paths?: Array<string>
+    sensitive?: boolean
+    word?: boolean
   }
   path?: never
   query?: {
