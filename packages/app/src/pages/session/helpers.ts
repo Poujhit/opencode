@@ -143,8 +143,8 @@ export const getTabReorderIndex = (tabs: readonly string[], from: string, to: st
   return toIndex
 }
 
-export const reviewDrift = (live: string, shown: string, busy: boolean) => {
-  return !busy && live !== shown
+export const reviewDrift = (live: string, shown: string, busy: boolean, ready: boolean) => {
+  return ready && !busy && live !== shown
 }
 
 export const createSizing = () => {

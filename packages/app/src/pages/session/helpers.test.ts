@@ -99,15 +99,19 @@ describe("getTabReorderIndex", () => {
 
 describe("reviewDrift", () => {
   test("detects external file drift while review is idle", () => {
-    expect(reviewDrift("live", "shown", false)).toBe(true)
+    expect(reviewDrift("live", "shown", false, true)).toBe(true)
   })
 
   test("ignores drift while review is saving", () => {
-    expect(reviewDrift("live", "shown", true)).toBe(false)
+    expect(reviewDrift("live", "shown", true, true)).toBe(false)
   })
 
   test("stays stable when live and shown content match", () => {
-    expect(reviewDrift("same", "same", false)).toBe(false)
+    expect(reviewDrift("same", "same", false, true)).toBe(false)
+  })
+
+  test("waits for the review content to match once before arming reset", () => {
+    expect(reviewDrift("live", "shown", false, false)).toBe(false)
   })
 })
 

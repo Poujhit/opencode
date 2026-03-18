@@ -10,6 +10,7 @@
     "dev:desktop": "bun --cwd packages/desktop tauri dev",
     "build:desktop": "bun --cwd packages/desktop tauri build",
     "dev:web": "bun --cwd packages/app dev",
+    "dev:console": "ulimit -n 10240 2>/dev/null; bun run --cwd packages/console/app dev",
     "dev:storybook": "bun --cwd packages/storybook storybook",
     "typecheck": "bun turbo typecheck",
     "prepare": "husky",
