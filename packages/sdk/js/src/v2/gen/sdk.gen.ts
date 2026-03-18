@@ -38,6 +38,8 @@ import type {
   FileStatusResponses,
   FileWriteResponses,
   FindFilesResponses,
+  FindReplaceApplyResponses,
+  FindReplacePreviewResponses,
   FindSymbolsResponses,
   FindTextResponses,
   FormatterStatusResponses,
@@ -242,10 +244,28 @@ export class Config extends HeyApiClient {
    *
    * Retrieve the current global OpenCode configuration settings and preferences.
    */
-  public get<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+  public get<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
     return (options?.client ?? this.client).get<GlobalConfigGetResponses, unknown, ThrowOnError>({
       url: "/global/config",
       ...options,
+      ...params,
     })
   }
 
@@ -256,11 +276,24 @@ export class Config extends HeyApiClient {
    */
   public update<ThrowOnError extends boolean = false>(
     parameters?: {
+      directory?: string
+      workspace?: string
       config?: Config3
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ key: "config", map: "body" }] }])
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { key: "config", map: "body" },
+          ],
+        },
+      ],
+    )
     return (options?.client ?? this.client).patch<GlobalConfigUpdateResponses, GlobalConfigUpdateErrors, ThrowOnError>({
       url: "/global/config",
       ...options,
@@ -280,10 +313,28 @@ export class Global extends HeyApiClient {
    *
    * Get health information about the OpenCode server.
    */
-  public health<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+  public health<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
     return (options?.client ?? this.client).get<GlobalHealthResponses, unknown, ThrowOnError>({
       url: "/global/health",
       ...options,
+      ...params,
     })
   }
 
@@ -292,10 +343,28 @@ export class Global extends HeyApiClient {
    *
    * Subscribe to global events from the OpenCode system using server-sent events.
    */
-  public event<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+  public event<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
     return (options?.client ?? this.client).sse.get<GlobalEventResponses, unknown, ThrowOnError>({
       url: "/global/event",
       ...options,
+      ...params,
     })
   }
 
@@ -304,10 +373,28 @@ export class Global extends HeyApiClient {
    *
    * Clean up and dispose all OpenCode instances, releasing all resources.
    */
-  public dispose<ThrowOnError extends boolean = false>(options?: Options<never, ThrowOnError>) {
+  public dispose<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
     return (options?.client ?? this.client).post<GlobalDisposeResponses, unknown, ThrowOnError>({
       url: "/global/dispose",
       ...options,
+      ...params,
     })
   }
 
@@ -326,10 +413,23 @@ export class Auth extends HeyApiClient {
   public remove<ThrowOnError extends boolean = false>(
     parameters: {
       providerID: string
+      directory?: string
+      workspace?: string
     },
     options?: Options<never, ThrowOnError>,
   ) {
-    const params = buildClientParams([parameters], [{ args: [{ in: "path", key: "providerID" }] }])
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "path", key: "providerID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+          ],
+        },
+      ],
+    )
     return (options?.client ?? this.client).delete<AuthRemoveResponses, AuthRemoveErrors, ThrowOnError>({
       url: "/auth/{providerID}",
       ...options,
@@ -345,6 +445,8 @@ export class Auth extends HeyApiClient {
   public set<ThrowOnError extends boolean = false>(
     parameters: {
       providerID: string
+      directory?: string
+      workspace?: string
       auth?: Auth3
     },
     options?: Options<never, ThrowOnError>,
@@ -355,6 +457,8 @@ export class Auth extends HeyApiClient {
         {
           args: [
             { in: "path", key: "providerID" },
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
             { key: "auth", map: "body" },
           ],
         },
@@ -2865,6 +2969,7 @@ export class Find extends HeyApiClient {
       directory?: string
       workspace?: string
       pattern: string
+      limit?: number
     },
     options?: Options<never, ThrowOnError>,
   ) {
@@ -2876,6 +2981,7 @@ export class Find extends HeyApiClient {
             { in: "query", key: "directory" },
             { in: "query", key: "workspace" },
             { in: "query", key: "pattern" },
+            { in: "query", key: "limit" },
           ],
         },
       ],
@@ -2884,6 +2990,88 @@ export class Find extends HeyApiClient {
       url: "/find",
       ...options,
       ...params,
+    })
+  }
+
+  /**
+   * Preview replace
+   *
+   * Preview plain-text replacements across files in the project.
+   */
+  public replacePreview<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      search?: string
+      replace?: string
+      paths?: Array<string>
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "search" },
+            { in: "body", key: "replace" },
+            { in: "body", key: "paths" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<FindReplacePreviewResponses, unknown, ThrowOnError>({
+      url: "/find/replace/preview",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Apply replace
+   *
+   * Apply plain-text replacements across files in the project.
+   */
+  public replaceApply<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      search?: string
+      replace?: string
+      paths?: Array<string>
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "search" },
+            { in: "body", key: "replace" },
+            { in: "body", key: "paths" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<FindReplaceApplyResponses, unknown, ThrowOnError>({
+      url: "/find/replace/apply",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 

@@ -356,13 +356,14 @@ export function createFileFind(opts: CreateFileFindOptions) {
     if (current === host) current = undefined
   }
 
-  const focus = () => {
+  const focus = (value?: string) => {
     if (current && current !== host) current.close()
     current = host
     target = host
     if (!open()) setState("open", true)
+    if (value !== undefined) setState("query", value)
     requestAnimationFrame(() => {
-      apply({ scroll: true })
+      apply({ reset: value !== undefined, scroll: true })
       input?.focus()
       input?.select()
     })

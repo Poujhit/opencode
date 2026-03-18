@@ -24,6 +24,7 @@ import { createFileTabListSync } from "@/pages/session/file-tab-scroll"
 import { FileTabContent } from "@/pages/session/file-tabs"
 import { createOpenSessionFileTab, createSessionTabs, getTabReorderIndex, type Sizing } from "@/pages/session/helpers"
 import { setSessionHandoff } from "@/pages/session/handoff"
+import { SessionSearchTab } from "@/pages/session/session-search-tab"
 import { useSessionLayout } from "@/pages/session/session-layout"
 
 export function SessionSidePanel(props: {
@@ -148,7 +149,7 @@ export function SessionSidePanel(props: {
   const fileTreeTab = () => layout.fileTree.tab()
 
   const setFileTreeTabValue = (value: string) => {
-    if (value !== "changes" && value !== "all") return
+    if (value !== "changes" && value !== "all" && value !== "search") return
     layout.fileTree.setTab(value)
   }
 
@@ -385,6 +386,9 @@ export function SessionSidePanel(props: {
                   <Tabs.Trigger value="all" class="flex-1" classes={{ button: "w-full" }}>
                     {language.t("session.files.all")}
                   </Tabs.Trigger>
+                  <Tabs.Trigger value="search" class="flex-1" classes={{ button: "w-full" }}>
+                    Search
+                  </Tabs.Trigger>
                 </Tabs.List>
                 <Tabs.Content value="changes" class="bg-background-stronger px-3 py-0">
                   <Switch>
@@ -429,6 +433,9 @@ export function SessionSidePanel(props: {
                       />
                     </Match>
                   </Switch>
+                </Tabs.Content>
+                <Tabs.Content value="search" class="bg-background-stronger px-0 py-0">
+                  <SessionSearchTab />
                 </Tabs.Content>
               </Tabs>
             </div>

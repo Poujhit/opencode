@@ -157,10 +157,15 @@ export const { use: useReview, provider: ReviewProvider } = createSimpleContext(
       if (!id) return []
       return sync.data.message[id]
     })
+    const diffs = createMemo(() => {
+      const id = params.id
+      if (!id) return
+      return sync.data.session_diff[id]
+    })
 
     createEffect(() => {
       if (params.id && msgs() === undefined) return
-      session().sync(deriveReview(msgs()))
+      session().sync(deriveReview(msgs(), diffs(), params.id))
     })
 
     return {

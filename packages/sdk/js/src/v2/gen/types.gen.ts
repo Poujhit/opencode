@@ -1820,6 +1820,52 @@ export type ProviderAuthAuthorization = {
   instructions: string
 }
 
+export type FileSearchRange = {
+  start: number
+  end: number
+}
+
+export type FileSearchItem = {
+  line: number
+  text: string
+  ranges: Array<FileSearchRange>
+}
+
+export type FileSearchFile = {
+  path: string
+  matches: Array<FileSearchItem>
+}
+
+export type FileSearchResult = {
+  files: Array<FileSearchFile>
+  total_files: number
+  total_matches: number
+}
+
+export type FileReplaceItem = {
+  line: number
+  text: string
+  next: string
+  ranges: Array<FileSearchRange>
+}
+
+export type FileReplaceFile = {
+  path: string
+  replacements: number
+  matches: Array<FileReplaceItem>
+}
+
+export type FileReplacePreview = {
+  files: Array<FileReplaceFile>
+  total_files: number
+  total_matches: number
+}
+
+export type FileReplaceApply = {
+  files: Array<string>
+  replacements: number
+}
+
 export type Symbol = {
   name: string
   kind: number
@@ -1956,7 +2002,10 @@ export type FormatterStatus = {
 export type GlobalHealthData = {
   body?: never
   path?: never
-  query?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
   url: "/global/health"
 }
 
@@ -1975,7 +2024,10 @@ export type GlobalHealthResponse = GlobalHealthResponses[keyof GlobalHealthRespo
 export type GlobalEventData = {
   body?: never
   path?: never
-  query?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
   url: "/global/event"
 }
 
@@ -1991,7 +2043,10 @@ export type GlobalEventResponse = GlobalEventResponses[keyof GlobalEventResponse
 export type GlobalConfigGetData = {
   body?: never
   path?: never
-  query?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
   url: "/global/config"
 }
 
@@ -2007,7 +2062,10 @@ export type GlobalConfigGetResponse = GlobalConfigGetResponses[keyof GlobalConfi
 export type GlobalConfigUpdateData = {
   body?: Config
   path?: never
-  query?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
   url: "/global/config"
 }
 
@@ -2032,7 +2090,10 @@ export type GlobalConfigUpdateResponse = GlobalConfigUpdateResponses[keyof Globa
 export type GlobalDisposeData = {
   body?: never
   path?: never
-  query?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
   url: "/global/dispose"
 }
 
@@ -2050,7 +2111,10 @@ export type AuthRemoveData = {
   path: {
     providerID: string
   }
-  query?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
   url: "/auth/{providerID}"
 }
 
@@ -2077,7 +2141,10 @@ export type AuthSetData = {
   path: {
     providerID: string
   }
-  query?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
   url: "/auth/{providerID}"
 }
 
@@ -4226,6 +4293,7 @@ export type FindTextData = {
     directory?: string
     workspace?: string
     pattern: string
+    limit?: number
   }
   url: "/find"
 }
@@ -4234,26 +4302,56 @@ export type FindTextResponses = {
   /**
    * Matches
    */
-  200: Array<{
-    path: {
-      text: string
-    }
-    lines: {
-      text: string
-    }
-    line_number: number
-    absolute_offset: number
-    submatches: Array<{
-      match: {
-        text: string
-      }
-      start: number
-      end: number
-    }>
-  }>
+  200: FileSearchResult
 }
 
 export type FindTextResponse = FindTextResponses[keyof FindTextResponses]
+
+export type FindReplacePreviewData = {
+  body?: {
+    search: string
+    replace: string
+    paths?: Array<string>
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/find/replace/preview"
+}
+
+export type FindReplacePreviewResponses = {
+  /**
+   * Preview
+   */
+  200: FileReplacePreview
+}
+
+export type FindReplacePreviewResponse = FindReplacePreviewResponses[keyof FindReplacePreviewResponses]
+
+export type FindReplaceApplyData = {
+  body?: {
+    search: string
+    replace: string
+    paths?: Array<string>
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/find/replace/apply"
+}
+
+export type FindReplaceApplyResponses = {
+  /**
+   * Apply result
+   */
+  200: FileReplaceApply
+}
+
+export type FindReplaceApplyResponse = FindReplaceApplyResponses[keyof FindReplaceApplyResponses]
 
 export type FindFilesData = {
   body?: never

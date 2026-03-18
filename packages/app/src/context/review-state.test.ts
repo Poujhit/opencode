@@ -31,6 +31,30 @@ describe("deriveReview", () => {
     expect(out[0]?.msg).toBe("m2")
     expect(out[0]?.next).toBe("c\n")
   })
+
+  test("falls back to session diffs when message diffs are missing", () => {
+    const out = deriveReview(
+      [{ id: "m1", role: "user", time: { created: 1 } }] as any,
+      [{ file: "src/a.ts", before: "a\n", after: "b\n", additions: 1, deletions: 1 }],
+      "ses_1",
+    )
+
+    expect(out).toHaveLength(1)
+    expect(out[0]?.msg).toBe("m1")
+    expect(out[0]?.next).toBe("b\n")
+  })
+
+  test("prefers message diffs over session diffs for the same file", () => {
+    const out = deriveReview(
+      [msg("m1", 1, "src/a.ts", "a\n", "b\n")] as any,
+      [{ file: "src/a.ts", before: "a\n", after: "c\n", additions: 1, deletions: 1 }],
+      "ses_1",
+    )
+
+    expect(out).toHaveLength(1)
+    expect(out[0]?.msg).toBe("m1")
+    expect(out[0]?.next).toBe("b\n")
+  })
 })
 
 describe("syncReview", () => {

@@ -730,6 +730,7 @@ export function FileTabContent(props: {
               file={path() ?? ""}
               content={contents()}
               editedContent={getEditedContent() ?? contents()}
+              search={search}
               review={
                 reviewView()
                   ? {

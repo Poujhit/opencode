@@ -64,7 +64,7 @@ type SharedProps<T> = {
 }
 
 export type FileSearchHandle = {
-  focus: () => void
+  focus: (query?: string) => void
 }
 
 export type FileSearchControl = {
@@ -401,7 +401,7 @@ function useSearchHandle(opts: {
     if (!search) return
 
     const handle = {
-      focus: () => opts.find.focus(),
+      focus: (query?: string) => opts.find.focus(query),
     } satisfies FileSearchHandle
 
     search.register(handle)

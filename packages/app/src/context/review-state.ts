@@ -1,5 +1,5 @@
 import { structuredPatch } from "diff"
-import type { Message } from "@opencode-ai/sdk/v2/client"
+import type { FileDiff, Message } from "@opencode-ai/sdk/v2/client"
 
 export type HunkState = "pending" | "accepted" | "rejected"
 
@@ -68,7 +68,31 @@ function build(file: string, msg: string, time: number, base: string, next: stri
   } satisfies ReviewFile
 }
 
-export function deriveReview(msgs: Message[] | undefined) {
+function push(
+  out: ReviewFile[],
+  seen: Set<string>,
+  file: string,
+  msg: string,
+  time: number,
+  base: string,
+  next: string,
+) {
+  if (seen.has(file)) return
+  const item = build(file, msg, time, base, next)
+  if (!item) return
+  seen.add(file)
+  out.push(item)
+}
+
+function last(msgs: Message[] | undefined) {
+  for (let i = (msgs?.length ?? 0) - 1; i >= 0; i--) {
+    const msg = msgs?.[i]
+    if (!msg || msg.role !== "user") continue
+    return msg
+  }
+}
+
+export function deriveReview(msgs: Message[] | undefined, diffs?: FileDiff[], id?: string) {
   const out: ReviewFile[] = []
   const seen = new Set<string>()
   for (let i = (msgs?.length ?? 0) - 1; i >= 0; i--) {
@@ -78,12 +102,15 @@ export function deriveReview(msgs: Message[] | undefined) {
     if (!diffs?.length) continue
     for (let j = diffs.length - 1; j >= 0; j--) {
       const diff = diffs[j]
-      if (seen.has(diff.file)) continue
-      const item = build(diff.file, msg.id, msg.time.created, diff.before, diff.after)
-      if (!item) continue
-      seen.add(diff.file)
-      out.push(item)
+      if (!diff) continue
+      push(out, seen, diff.file, msg.id, msg.time.created, diff.before, diff.after)
     }
+  }
+  const tail = last(msgs)
+  for (let i = (diffs?.length ?? 0) - 1; i >= 0; i--) {
+    const diff = diffs?.[i]
+    if (!diff) continue
+    push(out, seen, diff.file, tail?.id ?? id ?? "session", tail?.time.created ?? 0, diff.before, diff.after)
   }
   return out.reverse()
 }

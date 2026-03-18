@@ -73,6 +73,92 @@ export namespace File {
     })
   export type Content = z.infer<typeof Content>
 
+  export const SearchRange = z
+    .object({
+      start: z.number().int(),
+      end: z.number().int(),
+    })
+    .meta({
+      ref: "FileSearchRange",
+    })
+  export type SearchRange = z.infer<typeof SearchRange>
+
+  export const SearchItem = z
+    .object({
+      line: z.number().int(),
+      text: z.string(),
+      ranges: SearchRange.array(),
+    })
+    .meta({
+      ref: "FileSearchItem",
+    })
+  export type SearchItem = z.infer<typeof SearchItem>
+
+  export const SearchFile = z
+    .object({
+      path: z.string(),
+      matches: SearchItem.array(),
+    })
+    .meta({
+      ref: "FileSearchFile",
+    })
+  export type SearchFile = z.infer<typeof SearchFile>
+
+  export const SearchResult = z
+    .object({
+      files: SearchFile.array(),
+      total_files: z.number().int(),
+      total_matches: z.number().int(),
+    })
+    .meta({
+      ref: "FileSearchResult",
+    })
+  export type SearchResult = z.infer<typeof SearchResult>
+
+  export const ReplaceItem = z
+    .object({
+      line: z.number().int(),
+      text: z.string(),
+      next: z.string(),
+      ranges: SearchRange.array(),
+    })
+    .meta({
+      ref: "FileReplaceItem",
+    })
+  export type ReplaceItem = z.infer<typeof ReplaceItem>
+
+  export const ReplaceFile = z
+    .object({
+      path: z.string(),
+      replacements: z.number().int(),
+      matches: ReplaceItem.array(),
+    })
+    .meta({
+      ref: "FileReplaceFile",
+    })
+  export type ReplaceFile = z.infer<typeof ReplaceFile>
+
+  export const ReplacePreview = z
+    .object({
+      files: ReplaceFile.array(),
+      total_files: z.number().int(),
+      total_matches: z.number().int(),
+    })
+    .meta({
+      ref: "FileReplacePreview",
+    })
+  export type ReplacePreview = z.infer<typeof ReplacePreview>
+
+  export const ReplaceApply = z
+    .object({
+      files: z.string().array(),
+      replacements: z.number().int(),
+    })
+    .meta({
+      ref: "FileReplaceApply",
+    })
+  export type ReplaceApply = z.infer<typeof ReplaceApply>
+
   const binaryExtensions = new Set([
     "exe",
     "dll",
@@ -321,6 +407,75 @@ export namespace File {
     if (tops.includes(top)) return true
 
     return false
+  }
+
+  function guardQuery(query: string) {
+    const value = query.trim()
+    if (!value) throw new Error("Search query is required")
+    if (value.includes("\n") || value.includes("\r")) {
+      throw new Error("Multiline search is not supported")
+    }
+    return value
+  }
+
+  function guardReplace(value: string) {
+    if (value.includes("\n") || value.includes("\r")) {
+      throw new Error("Multiline replace is not supported")
+    }
+    return value
+  }
+
+  function group(items: Ripgrep.Match["data"][]): SearchResult {
+    const map = new Map<string, SearchItem[]>()
+    let total = 0
+
+    for (const item of items) {
+      const list = map.get(item.path.text) ?? []
+      list.push({
+        line: item.line_number,
+        text: item.lines.text.replace(/\r?\n$/, ""),
+        ranges: item.submatches.map((match) => ({
+          start: match.start,
+          end: match.end,
+        })),
+      })
+      map.set(item.path.text, list)
+      total += item.submatches.length
+    }
+
+    const files = [...map.entries()].map(([path, matches]) => ({
+      path,
+      matches,
+    }))
+
+    return {
+      files,
+      total_files: files.length,
+      total_matches: total,
+    }
+  }
+
+  function line(text: string, ranges: SearchRange[], next: string) {
+    if (ranges.length === 0) return text
+
+    let out = ""
+    let last = 0
+    for (const item of ranges) {
+      out += text.slice(last, item.start)
+      out += next
+      last = item.end
+    }
+    out += text.slice(last)
+    return out
+  }
+
+  function replaceAll(text: string, search: string, next: string) {
+    const parts = text.split(search)
+    if (parts.length === 1) return
+    return {
+      text: parts.join(next),
+      count: parts.length - 1,
+    }
   }
 
   export const Event = {
@@ -621,6 +776,96 @@ export namespace File {
       }
       return a.name.localeCompare(b.name)
     })
+  }
+
+  export async function find(input: { pattern: string; limit?: number }) {
+    const pattern = guardQuery(input.pattern)
+    const hits = await Ripgrep.search({
+      cwd: Instance.directory,
+      pattern,
+      limit: input.limit,
+      literal: true,
+    })
+    return group(hits)
+  }
+
+  export async function preview(input: { search: string; replace: string; paths?: string[] }) {
+    const search = guardQuery(input.search)
+    const next = guardReplace(input.replace)
+    const allow = input.paths?.length ? new Set(input.paths.map((item) => item.replaceAll("\\", "/"))) : undefined
+    const hits = await Ripgrep.search({
+      cwd: Instance.directory,
+      pattern: search,
+      literal: true,
+    })
+
+    const map = new Map<string, ReplaceItem[]>()
+    let total = 0
+
+    for (const item of hits) {
+      const path = item.path.text.replaceAll("\\", "/")
+      if (allow && !allow.has(path)) continue
+
+      const list = map.get(path) ?? []
+      const text = item.lines.text.replace(/\r?\n$/, "")
+      const ranges = item.submatches.map((match) => ({
+        start: match.start,
+        end: match.end,
+      }))
+      list.push({
+        line: item.line_number,
+        text,
+        next: line(text, ranges, next),
+        ranges,
+      })
+      map.set(path, list)
+      total += item.submatches.length
+    }
+
+    const files = [...map.entries()].map(([path, matches]) => ({
+      path,
+      replacements: matches.reduce((sum, item) => sum + item.ranges.length, 0),
+      matches,
+    }))
+
+    return {
+      files,
+      total_files: files.length,
+      total_matches: total,
+    }
+  }
+
+  export async function replace(input: { search: string; replace: string; paths?: string[] }) {
+    const search = guardQuery(input.search)
+    const next = guardReplace(input.replace)
+    const paths = input.paths?.length
+      ? input.paths.map((item) => item.replaceAll("\\", "/"))
+      : (await preview({ search, replace: next })).files.map((item) => item.path)
+
+    const files: string[] = []
+    let replacements = 0
+
+    for (const file of paths) {
+      const full = path.join(Instance.directory, file)
+      if (!Instance.containsPath(full)) continue
+      if (!(await Filesystem.exists(full))) continue
+      if (isBinaryByExtension(file) && !isTextByExtension(file) && !isTextByName(file)) continue
+
+      const text = await Filesystem.readText(full).catch(() => undefined)
+      if (text === undefined) continue
+
+      const out = replaceAll(text, search, next)
+      if (!out || out.count === 0) continue
+
+      await Filesystem.write(full, out.text)
+      files.push(file)
+      replacements += out.count
+    }
+
+    return {
+      files,
+      replacements,
+    }
   }
 
   export async function search(input: { query: string; limit?: number; dirs?: boolean; type?: "file" | "directory" }) {

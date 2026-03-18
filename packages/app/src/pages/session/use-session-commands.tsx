@@ -260,6 +260,22 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
         onSelect: () => dialog.show(() => <DialogSelectFile onOpenFile={showAllFiles} />),
       }),
       fileCommand({
+        id: "search.project",
+        title: "Search in workspace",
+        description: "Search and replace text across files in the active workspace",
+        keybind: "mod+shift+f",
+        onSelect: () => {
+          layout.fileTree.open()
+          layout.fileTree.setTab("search")
+          requestAnimationFrame(() => {
+            const input = document.querySelector('[data-file-search-input="project"]')
+            if (!(input instanceof HTMLInputElement)) return
+            input.focus()
+            input.select()
+          })
+        },
+      }),
+      fileCommand({
         id: "tab.close",
         title: language.t("command.tab.close"),
         keybind: "mod+w",
