@@ -130,7 +130,7 @@ export const { use: useGlobalSDK, provider: GlobalSDKProvider } = createSimpleCo
         }
         abort.signal.addEventListener("abort", onAbort)
         try {
-          const events = await eventSdk.global.event({
+          const events = await eventSdk.global.event(undefined, {
             signal: attempt.signal,
             onSseError: (error) => {
               if (aborted(error)) return
