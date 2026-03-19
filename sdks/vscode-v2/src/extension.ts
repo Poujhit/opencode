@@ -1,4 +1,5 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { randomBytes } from "node:crypto";
 import { createServer } from "node:net";
 import * as path from "node:path";
 import * as vscode from "vscode";
@@ -18,9 +19,36 @@ const STORE = "opencodeV2.session";
 const BASE = "opencode-v2-base";
 const NEXT = "opencode-v2-proposed";
 
+type UserMsg = Extract<Message, { role: "user" }>
+type AssistantMsg = Extract<Message, { role: "assistant" }>
+
+type InPart =
+  | {
+      id?: string
+      type: "text"
+      text: string
+    }
+  | {
+      id?: string
+      type: "file"
+      mime: string
+      filename?: string
+      url: string
+      source?: {
+        type: "file"
+        path: string
+        text: {
+          value: string
+          start: number
+          end: number
+        }
+      }
+    }
+
 type Msg = {
   info: Message
   parts: Part[]
+  opt?: boolean
 }
 
 type Kind = "added" | "deleted" | "modified"
@@ -37,6 +65,7 @@ type Wait = {
   msg?: boolean
   diff?: boolean
   sess?: boolean
+  stat?: boolean
 }
 
 type BoxState = {
@@ -48,11 +77,46 @@ type BoxState = {
   stat: string
   err?: string
   wait: Wait
+  cold?: boolean
 }
 
 type FileArg = {
   folder?: string
   file?: string
+}
+
+type ViewPart = {
+  id: string
+  kind: "text" | "reasoning" | "tool" | "file" | "meta"
+  title?: string
+  text?: string
+  status?: string
+  tool?: string
+}
+
+type ViewDiff = {
+  file: string
+  kind: Kind
+  add: number
+  del: number
+}
+
+type ViewMsg = {
+  id: string
+  role: "user" | "assistant"
+  parts: ViewPart[]
+  pending: boolean
+  error?: string
+  opt?: boolean
+}
+
+type ViewTurn = {
+  id: string
+  user: ViewMsg
+  assistant: ViewMsg[]
+  active: boolean
+  thinking: boolean
+  diff: ViewDiff[]
 }
 
 class Docs implements vscode.TextDocumentContentProvider {
@@ -95,6 +159,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
   private loop?: Promise<void>;
   private conn = "idle";
   private note = "Idle";
+  private live = false;
   private auto = new Map<string, string>();
 
   constructor(ctx: vscode.ExtensionContext) {
@@ -359,7 +424,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
       if (msg?.type === "refresh") {
         const box = this.box(this.scope());
         if (!box) {return;}
-        void this.sync(box.dir, { sess: true, msg: true, diff: true });
+        void this.sync(box.dir, { sess: true, msg: true, diff: true, stat: true });
         return;
       }
       if (msg?.type === "file" && typeof msg.file === "string" && typeof msg.act === "string") {
@@ -479,13 +544,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
           sid: box.sid,
           title: box.sess?.title,
           stat: box.err ? `${box.stat} - ${box.err}` : box.stat,
-          msg: box.msg.map((item) => ({
-            id: item.info.id,
-            role: item.info.role,
-            parts: this.render(item.parts),
-            pending: item.info.role === "assistant" && typeof item.info.time.completed !== "number",
-            error: item.info.role === "assistant" ? item.info.error?.data?.message : undefined,
-          })),
+          turn: this.turns(box),
           diff: box.diff.map((item) => ({
             file: item.file,
             kind: item.kind,
@@ -502,28 +561,166 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
     };
   }
 
-  private render(parts: Part[]) {
+  private turns(box: BoxState) {
+    const active = this.active(box);
+    const list: ViewTurn[] = [];
+    const by = new Map<string, ViewTurn>();
+    for (const item of box.msg) {
+      if (item.info.role === "user") {
+        const turn: ViewTurn = {
+          id: item.info.id,
+          user: this.show(item),
+          assistant: [],
+          active: item.info.id === active,
+          thinking: false,
+          diff: [],
+        };
+        list.push(turn);
+        by.set(item.info.id, turn);
+        continue;
+      }
+      const turn = by.get(item.info.parentID);
+      if (!turn) {continue;}
+      turn.assistant.push(this.show(item));
+    }
+    return list.map((item) => {
+      const raw = this.msg(box, item.id)?.info;
+      const diff = raw?.role === "user" ? this.files(box, raw, item.active) : [];
+      const ready = item.assistant.some((msg) => msg.error || msg.parts.length > 0);
+      return {
+        ...item,
+        diff,
+        thinking: item.active && !ready,
+      };
+    });
+  }
+
+  private files(box: BoxState, info: UserMsg, active: boolean) {
+    const list: Array<FileDiff | Diff> = info.summary?.diffs?.length ? info.summary.diffs : active ? box.diff : [];
+    const seen = new Set<string>();
+    return list.flatMap<ViewDiff>((item) => {
+      if (seen.has(item.file)) {return [];}
+      seen.add(item.file);
+      return [{
+        file: item.file,
+        kind: "kind" in item ? item.kind : this.kind(item),
+        add: item.additions,
+        del: item.deletions,
+      }];
+    });
+  }
+
+  private kind(item: FileDiff) {
+    if (item.before === "" && item.after !== "") {return "added" as const;}
+    if (item.after === "" && item.before !== "") {return "deleted" as const;}
+    return "modified" as const;
+  }
+
+  private active(box: BoxState) {
+    for (let i = box.msg.length - 1; i >= 0; i--) {
+      const item = box.msg[i];
+      if (item.info.role === "assistant" && typeof item.info.time.completed !== "number") {
+        return item.info.parentID;
+      }
+    }
+    if (box.stat === "idle") {return;}
+    for (let i = box.msg.length - 1; i >= 0; i--) {
+      const item = box.msg[i];
+      if (item.info.role === "user") {return item.info.id;}
+    }
+  }
+
+  private show(item: Msg): ViewMsg {
+    const err =
+      item.info.role === "assistant" && typeof item.info.error?.data?.message === "string"
+        ? item.info.error.data.message
+        : undefined;
+    return {
+      id: item.info.id,
+      role: item.info.role,
+      parts: this.parts(item.parts),
+      pending: item.info.role === "assistant" && typeof item.info.time.completed !== "number",
+      error: err,
+      opt: item.opt,
+    };
+  }
+
+  private parts(parts: Part[]): ViewPart[] {
     return parts
-      .flatMap((part) => {
-        if (part.type === "text") {return [{ kind: "text", text: part.text }];}
-        if (part.type === "subtask") {return [{ kind: "meta", text: part.description || part.prompt }];}
+      .flatMap<ViewPart>((part) => {
+        if (part.type === "text") {
+          if (!part.text.trim()) {return [];}
+          return [{ id: part.id, kind: "text", text: part.text } satisfies ViewPart];
+        }
+        if (part.type === "reasoning") {
+          if (!part.text.trim()) {return [];}
+          return [{ id: part.id, kind: "reasoning", title: "Thinking", text: part.text } satisfies ViewPart];
+        }
+        if (part.type === "subtask") {
+          return [{ id: part.id, kind: "meta", title: "Subtask", text: part.description || part.prompt } satisfies ViewPart];
+        }
         if (part.type === "file") {
           const source = part.source && "path" in part.source ? part.source.path : undefined;
-          return [{ kind: "meta", text: `Attached ${part.filename ?? source ?? part.url}` }];
+          return [{
+            id: part.id,
+            kind: "file",
+            title: part.filename ?? source ?? part.url,
+            text: part.mime,
+          } satisfies ViewPart];
         }
         if (part.type === "tool") {
           const title = "title" in part.state ? part.state.title : undefined;
-          return [{ kind: "meta", text: `${title ?? part.tool} (${part.state.status})` }];
+          const text =
+            "output" in part.state && typeof part.state.output === "string"
+              ? part.state.output
+              : "error" in part.state && typeof part.state.error === "string"
+                ? part.state.error
+                : typeof part.state.input?.command === "string"
+                  ? part.state.input.command
+                  : undefined;
+          return [{
+            id: part.id,
+            kind: "tool",
+            tool: part.tool,
+            title: title ?? part.tool,
+            text,
+            status: part.state.status,
+          } satisfies ViewPart];
         }
-        if (part.type === "patch") {return [{ kind: "meta", text: `Patched ${part.files.length} file(s)` }];}
-        if (part.type === "step-start") {return [{ kind: "meta", text: "Working" }];}
-        if (part.type === "step-finish") {return [{ kind: "meta", text: `Completed ${part.reason}` }];}
-        if (part.type === "retry") {return [{ kind: "meta", text: `Retry ${part.attempt}: ${part.error.data.message}` }];}
-        if (part.type === "agent") {return [{ kind: "meta", text: `Agent ${part.name}` }];}
-        if (part.type === "compaction") {return [{ kind: "meta", text: part.auto ? "Auto compaction" : "Compaction" }];}
+        if (part.type === "patch") {
+          return [{ id: part.id, kind: "meta", title: "Patch", text: `Patched ${part.files.length} file(s)` } satisfies ViewPart];
+        }
+        if (part.type === "step-start") {
+          return [{ id: part.id, kind: "meta", title: "Step", text: "Working" } satisfies ViewPart];
+        }
+        if (part.type === "step-finish") {
+          return [{ id: part.id, kind: "meta", title: "Step", text: `Completed ${part.reason}` } satisfies ViewPart];
+        }
+        if (part.type === "retry") {
+          return [{
+            id: part.id,
+            kind: "meta",
+            title: `Retry ${part.attempt}`,
+            text: part.error.data.message,
+          } satisfies ViewPart];
+        }
+        if (part.type === "agent") {
+          return [{ id: part.id, kind: "meta", title: "Agent", text: part.name } satisfies ViewPart];
+        }
+        if (part.type === "compaction") {
+          return [{
+            id: part.id,
+            kind: "meta",
+            title: "Compaction",
+            text: part.auto ? "Auto compaction" : "Compaction",
+          } satisfies ViewPart];
+        }
+        if (part.type === "snapshot") {
+          return [{ id: part.id, kind: "meta", title: "Snapshot" } satisfies ViewPart];
+        }
         return [];
       })
-      .filter((item) => item.text.trim().length > 0);
+      .filter((item) => (item.text ?? item.title ?? "").trim().length > 0);
   }
 
   private msg(box: BoxState, id: string) {
@@ -534,10 +731,11 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
     const msg = this.msg(box, info.id);
     if (msg) {
       msg.info = info;
+      msg.opt = false;
       return msg;
     }
-    const next = { info, parts: [] };
-    box.msg.push(next);
+    const next = { info, parts: [] } satisfies Msg;
+    insertMsg(box.msg, next);
     return next;
   }
 
@@ -554,7 +752,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
   private add(box: BoxState, part: Part) {
     const msg = this.msg(box, part.messageID);
     if (!msg) {
-      this.mark(box, { msg: true });
+      this.mark(box, { msg: true, stat: true });
       return false;
     }
     const cur = msg.parts.find((item) => item.id === part.id);
@@ -562,14 +760,14 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
       Object.assign(cur, part);
       return true;
     }
-    msg.parts.push(part);
+    insertPart(msg.parts, part);
     return true;
   }
 
   private delta(box: BoxState, props: { messageID: string; partID: string; field: string; delta: string }) {
     const part = this.part(box, props.messageID, props.partID);
     if (!part) {
-      this.mark(box, { msg: true });
+      this.mark(box, { msg: true, stat: true });
       return false;
     }
     const data = part as Record<string, unknown>;
@@ -586,6 +784,83 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
     return true;
   }
 
+  private merge(box: BoxState, list: Msg[]) {
+    const opt = box.msg.filter((item) => item.opt);
+    if (opt.length === 0) {
+      box.msg = list;
+      return;
+    }
+    const next = list.map((item) => ({
+      info: item.info,
+      parts: [...item.parts],
+    } satisfies Msg));
+    for (const item of opt) {
+      const hit = next.find((msg) => msg.info.id === item.info.id);
+      if (!hit) {
+        insertMsg(next, cloneMsg(item));
+        continue;
+      }
+      for (const part of item.parts) {
+        if (hit.parts.find((entry) => entry.id === part.id)) {continue;}
+        insertPart(hit.parts, structuredClone(part));
+      }
+    }
+    box.msg = next;
+  }
+
+  private optimistic(box: BoxState, sid: string, parts: InPart[]) {
+    const next = parts.map((part) => ({
+      ...part,
+      id: part.id ?? token("part"),
+    }));
+    const last = [...box.msg].reverse().find((item): item is Msg & { info: UserMsg } => item.info.role === "user");
+    const info: UserMsg = {
+      id: token("message"),
+      sessionID: sid,
+      role: "user",
+      time: {
+        created: Date.now(),
+      },
+      agent: last?.info.agent ?? "opencode",
+      model: last?.info.model ?? {
+        providerID: "opencode",
+        modelID: "vscode-v2",
+      },
+      variant: last?.info.variant,
+    };
+    insertMsg(box.msg, {
+      info,
+      parts: next.map((part) => this.input(sid, info.id, part)),
+      opt: true,
+    });
+    return {
+      id: info.id,
+      parts: next,
+    };
+  }
+
+  private input(sid: string, mid: string, part: InPart & { id: string }): Part {
+    if (part.type === "text") {
+      return {
+        id: part.id,
+        type: "text",
+        text: part.text,
+        sessionID: sid,
+        messageID: mid,
+      };
+    }
+    return {
+      id: part.id,
+      type: "file",
+      mime: part.mime,
+      filename: part.filename,
+      url: part.url,
+      source: part.source,
+      sessionID: sid,
+      messageID: mid,
+    };
+  }
+
   private html(webview: vscode.Webview) {
     const nonce = Math.random().toString(36).slice(2);
     const csp = [
@@ -594,6 +869,8 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
       `style-src ${webview.cspSource} 'unsafe-inline'`,
       `script-src 'nonce-${nonce}'`,
     ].join("; ");
+
+    return webviewHtml(nonce, csp);
 
     return `<!doctype html>
 <html lang="en">
@@ -1046,6 +1323,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
         this.client = undefined;
         this.url = undefined;
         this.evt?.abort();
+        this.live = false;
         this.conn = "down";
         this.note = signal ? `Server exited (${signal})` : `Server exited (${code ?? "unknown"})`;
         for (const box of this.map.values()) {
@@ -1087,6 +1365,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
           .then((res) => res.stream)
           .catch(async (err) => {
             if (ctl.signal.aborted) {return;}
+            this.live = false;
             this.conn = "reconnecting";
             this.note = err instanceof Error ? err.message : "Event stream failed";
             this.draw();
@@ -1095,8 +1374,17 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
           });
 
         if (!stream) {continue;}
+        const cold = !this.live;
+        this.live = true;
         this.conn = "ready";
         this.note = this.url ?? "Connected";
+        if (cold) {
+          for (const box of this.map.values()) {
+            if (!box.cold) {continue;}
+            box.cold = false;
+            this.mark(box, { msg: true, diff: true, sess: true, stat: true });
+          }
+        }
         this.draw();
         await (async () => {
           for await (const event of stream) {
@@ -1104,6 +1392,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
           }
         })().catch(async (err) => {
           if (ctl.signal.aborted) {return;}
+          this.live = false;
           this.conn = "reconnecting";
           this.note = err instanceof Error ? err.message : "Event stream failed";
           this.draw();
@@ -1112,6 +1401,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
       }
     })().finally(() => {
       if (this.evt === ctl) {this.evt = undefined;}
+      if (!ctl.signal.aborted) {this.live = false;}
       this.loop = undefined;
     });
   }
@@ -1120,7 +1410,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
     const box = this.box(dir);
     if (!box) {return;}
     if (box.sid) {
-      await this.sync(dir, { sess: true, msg: true, diff: true });
+      await this.sync(dir, { sess: true, msg: true, diff: true, stat: true });
       return box.sid;
     }
 
@@ -1128,7 +1418,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
     if (sid) {
       box.sid = sid;
       this.bySid.set(sid, this.key(dir));
-      const ok = await this.sync(dir, { sess: true, msg: true, diff: true });
+      const ok = await this.sync(dir, { sess: true, msg: true, diff: true, stat: true });
       if (ok && box.sid === sid) {return sid;}
       this.drop(box);
     }
@@ -1151,24 +1441,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
     dir: vscode.WorkspaceFolder,
     body: {
       noReply?: boolean
-      parts: Array<{
-        type: "text"
-        text: string
-      } | {
-        type: "file"
-        mime: string
-        filename?: string
-        url: string
-        source?: {
-          type: "file"
-          path: string
-          text: {
-            value: string
-            start: number
-            end: number
-          }
-        }
-      }>
+      parts: InPart[]
     },
   ) {
     const box = this.box(dir);
@@ -1176,27 +1449,43 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
     const sid = await this.make(dir);
     if (!sid) {return;}
     const client = await this.ensure();
+    const input = this.optimistic(box, sid, body.parts);
     box.stat = "busy";
     box.err = undefined;
+    box.cold = !this.live;
     this.draw();
     await client.session
-      .prompt({
+      .promptAsync({
         sessionID: sid,
         directory: dir.uri.fsPath,
+        messageID: input.id,
         noReply: body.noReply,
-        parts: body.parts,
+        parts: input.parts,
       })
       .catch((err) => {
+        this.cut(box, input.id);
         box.err = err instanceof Error ? err.message : String(err);
+        box.stat = "error";
+        this.draw();
         throw err;
       });
-    await this.sync(dir, { sess: true, msg: true, diff: true });
+    if (body.noReply) {
+      box.stat = "idle";
+      box.cold = false;
+      this.mark(box, { msg: true, sess: true, stat: true });
+      this.draw();
+      return;
+    }
+    if (box.cold) {
+      this.mark(box, { msg: true, diff: true, sess: true, stat: true });
+    }
   }
 
   private mark(box: BoxState, next: Partial<Wait>) {
     box.wait.msg ||= next.msg;
     box.wait.diff ||= next.diff;
     box.wait.sess ||= next.sess;
+    box.wait.stat ||= next.stat;
     if (box.wait.id) {return;}
     box.wait.id = setTimeout(() => {
       box.wait.id = undefined;
@@ -1204,15 +1493,17 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
         msg: Boolean(box.wait.msg),
         diff: Boolean(box.wait.diff),
         sess: Boolean(box.wait.sess),
+        stat: Boolean(box.wait.stat),
       };
       box.wait.msg = false;
       box.wait.diff = false;
       box.wait.sess = false;
+      box.wait.stat = false;
       void this.sync(box.dir, run);
     }, 150);
   }
 
-  private async sync(dir: vscode.WorkspaceFolder, next: { msg?: boolean; diff?: boolean; sess?: boolean }) {
+  private async sync(dir: vscode.WorkspaceFolder, next: { msg?: boolean; diff?: boolean; sess?: boolean; stat?: boolean }) {
     const box = this.box(dir);
     if (!box?.sid) {return false;}
     const client = await this.ensure();
@@ -1223,8 +1514,6 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
             .get({ sessionID: sid, directory: dir.uri.fsPath })
             .then((res) => {
               box.sess = res.data;
-              box.stat = "idle";
-              box.err = undefined;
             })
             .catch((err) => {
               if (gone(err)) {this.drop(box);}
@@ -1235,7 +1524,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
         ? client.session
             .messages({ sessionID: sid, directory: dir.uri.fsPath, limit: 100 })
             .then((res) => {
-              box.msg = res.data ?? [];
+              this.merge(box, res.data ?? []);
             })
             .catch((err) => {
               box.err = err instanceof Error ? err.message : String(err);
@@ -1245,6 +1534,22 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
         ? client.session
             .diff({ sessionID: sid, directory: dir.uri.fsPath })
             .then((res) => this.set(box, res.data ?? []))
+            .catch((err) => {
+              box.err = err instanceof Error ? err.message : String(err);
+            })
+        : Promise.resolve(),
+      next.stat
+        ? client.session
+            .status({ directory: dir.uri.fsPath })
+            .then((res) => {
+              const stat = res.data?.[sid];
+              if (!stat) {
+                box.stat = "idle";
+                return;
+              }
+              box.stat = this.state(stat);
+              box.err = undefined;
+            })
             .catch((err) => {
               box.err = err instanceof Error ? err.message : String(err);
             })
@@ -1337,6 +1642,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
 
     if (event.type === "session.idle") {
       box.stat = "idle";
+      box.cold = false;
       this.draw();
       return;
     }
@@ -1345,6 +1651,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
       const msg = event.properties.error?.data;
       box.err = msg && typeof msg === "object" && "message" in msg && typeof msg.message === "string" ? msg.message : "Unknown session error";
       box.stat = "error";
+      box.cold = false;
       this.draw();
       return;
     }
@@ -1388,7 +1695,7 @@ class Ext implements vscode.WebviewViewProvider, vscode.Disposable {
       event.type === "permission.asked" ||
       event.type === "permission.replied"
     ) {
-      this.mark(box, { msg: true, sess: true });
+      this.mark(box, { msg: true, sess: true, stat: true });
     }
   }
 
@@ -1546,6 +1853,38 @@ function same(a: vscode.Uri, b: vscode.Uri) {
   return a.toString() === b.toString();
 }
 
+function cmp(a: string, b: string) {
+  if (a < b) {return -1;}
+  if (a > b) {return 1;}
+  return 0;
+}
+
+function insertMsg(list: Msg[], item: Msg) {
+  const at = list.findIndex((entry) => cmp(entry.info.id, item.info.id) > 0);
+  if (at === -1) {
+    list.push(item);
+    return;
+  }
+  list.splice(at, 0, item);
+}
+
+function insertPart(list: Part[], part: Part) {
+  const at = list.findIndex((entry) => cmp(entry.id, part.id) > 0);
+  if (at === -1) {
+    list.push(part);
+    return;
+  }
+  list.splice(at, 0, part);
+}
+
+function cloneMsg(msg: Msg) {
+  return {
+    info: structuredClone(msg.info),
+    parts: msg.parts.map((part) => structuredClone(part)),
+    opt: msg.opt,
+  } satisfies Msg;
+}
+
 function wait(ms: number) {
   return new Promise<void>((done) => setTimeout(done, ms));
 }
@@ -1581,6 +1920,681 @@ async function ready(url: string, proc: ChildProcessWithoutNullStreams) {
     await wait(125);
   }
   throw new Error("Timed out waiting for opencode serve to become ready");
+}
+
+const prefix = {
+  message: "msg",
+  part: "prt",
+} as const;
+
+let last = 0;
+let count = 0;
+
+function token(kind: keyof typeof prefix) {
+  const now = Date.now();
+  if (now !== last) {
+    last = now;
+    count = 0;
+  }
+  count += 1;
+
+  const mark = BigInt(now) * BigInt(0x1000) + BigInt(count);
+  const time = new Uint8Array(6);
+  for (let i = 0; i < 6; i++) {
+    time[i] = Number((mark >> BigInt(40 - 8 * i)) & BigInt(0xff));
+  }
+  return `${prefix[kind]}_${hex(time)}${rand(14)}`;
+}
+
+function hex(data: Uint8Array) {
+  let out = "";
+  for (let i = 0; i < data.length; i++) {
+    out += data[i].toString(16).padStart(2, "0");
+  }
+  return out;
+}
+
+function rand(size: number) {
+  const chars = "0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz";
+  const data = randomBytes(size);
+  let out = "";
+  for (let i = 0; i < data.length; i++) {
+    out += chars[data[i] % 62];
+  }
+  return out;
+}
+
+function webviewHtml(nonce: string, csp: string) {
+  return `<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta http-equiv="Content-Security-Policy" content="${csp}" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <style>
+      :root {
+        color-scheme: light dark;
+        --bg: color-mix(in srgb, var(--vscode-sideBar-background, #0f1115) 92%, black 8%);
+        --panel: color-mix(in srgb, var(--vscode-editor-background, #111318) 92%, white 8%);
+        --panel-2: color-mix(in srgb, var(--panel) 90%, white 10%);
+        --panel-3: color-mix(in srgb, var(--panel) 78%, white 22%);
+        --fg: var(--vscode-foreground, #f3f4f6);
+        --muted: var(--vscode-descriptionForeground, #a1a1aa);
+        --line: var(--vscode-panel-border, rgba(255, 255, 255, 0.08));
+        --accent: var(--vscode-textLink-foreground, #dbeafe);
+        --user: color-mix(in srgb, #c084fc 10%, var(--panel) 90%);
+        --user-line: color-mix(in srgb, #c084fc 42%, var(--line));
+        --good: var(--vscode-testing-iconPassed, #4ade80);
+        --bad: var(--vscode-testing-iconFailed, #fb7185);
+        --shadow: 0 18px 50px rgba(0, 0, 0, 0.24);
+        --mono: var(--vscode-editor-font-family, "SFMono-Regular", ui-monospace, monospace);
+      }
+      * { box-sizing: border-box; }
+      html { height: 100%; overflow: hidden; }
+      body {
+        margin: 0;
+        height: 100%;
+        overflow: hidden;
+        background: var(--bg);
+        color: var(--fg);
+        font: 13px/1.5 var(--vscode-font-family, ui-sans-serif, system-ui, sans-serif);
+      }
+      button, textarea {
+        font: inherit;
+      }
+      main {
+        display: grid;
+        grid-template-rows: auto minmax(0, 1fr) auto;
+        height: 100vh;
+        overflow: hidden;
+      }
+      .top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        padding: 16px 16px 14px;
+        border-bottom: 1px solid var(--line);
+        background:
+          radial-gradient(circle at top left, color-mix(in srgb, var(--accent) 10%, transparent) 0, transparent 48%),
+          color-mix(in srgb, var(--bg) 88%, black 12%);
+      }
+      .title {
+        font-size: 14px;
+        font-weight: 600;
+        letter-spacing: -0.01em;
+      }
+      .sub {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 2px;
+      }
+      .status {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .dot {
+        width: 8px;
+        height: 8px;
+        border-radius: 999px;
+        background: var(--muted);
+      }
+      .dot.ready { background: var(--good); }
+      .dot.starting, .dot.reconnecting { background: #f59e0b; }
+      .dot.down { background: var(--bad); }
+      .btns, .acts {
+        display: flex;
+        gap: 8px;
+      }
+      button {
+        border: 1px solid var(--line);
+        background: color-mix(in srgb, var(--panel) 74%, transparent);
+        color: inherit;
+        padding: 8px 12px;
+        border-radius: 12px;
+        cursor: pointer;
+        transition: border-color 120ms ease, background 120ms ease, transform 120ms ease;
+      }
+      button:hover:enabled {
+        border-color: color-mix(in srgb, var(--accent) 28%, var(--line));
+        background: color-mix(in srgb, var(--panel-2) 88%, var(--accent) 12%);
+        transform: translateY(-1px);
+      }
+      button:disabled {
+        cursor: default;
+        opacity: 0.5;
+      }
+      button.primary {
+        background: color-mix(in srgb, var(--accent) 16%, var(--panel));
+      }
+      .thread {
+        min-height: 0;
+        overflow: auto;
+        padding: 18px 16px 26px;
+        background:
+          linear-gradient(180deg, color-mix(in srgb, var(--bg) 92%, black 8%) 0%, var(--bg) 28%),
+          var(--bg);
+      }
+      .feed {
+        display: grid;
+        align-content: start;
+        gap: 20px;
+      }
+      .empty {
+        color: var(--muted);
+        padding: 22px 6px;
+        max-width: 520px;
+      }
+      .turn {
+        display: grid;
+        gap: 14px;
+      }
+      .turn-main {
+        display: grid;
+        gap: 10px;
+      }
+      .reply {
+        display: grid;
+        gap: 8px;
+      }
+      .reply.user {
+        justify-items: end;
+      }
+      .who {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .reply.user .who {
+        justify-content: flex-end;
+      }
+      .card {
+        width: min(100%, 820px);
+        border: 1px solid var(--line);
+        background: var(--panel);
+        border-radius: 20px;
+        padding: 14px 15px;
+        box-shadow: var(--shadow);
+      }
+      .card.user {
+        max-width: 82%;
+        background: var(--user);
+        border-color: var(--user-line);
+      }
+      .parts {
+        display: grid;
+        gap: 12px;
+      }
+      .part {
+        display: grid;
+        gap: 8px;
+        border: 1px solid var(--line);
+        background: color-mix(in srgb, var(--panel-2) 92%, transparent);
+        border-radius: 16px;
+        padding: 12px;
+      }
+      .card.user .part {
+        background: transparent;
+        border-color: color-mix(in srgb, var(--user-line) 72%, var(--line));
+      }
+      .part.text {
+        border: none;
+        background: transparent;
+        padding: 0;
+      }
+      .part.reasoning {
+        border-style: dashed;
+      }
+      .part.tool {
+        background: color-mix(in srgb, var(--panel-3) 90%, transparent);
+      }
+      .part.file {
+        background: color-mix(in srgb, var(--panel) 86%, white 14%);
+      }
+      .part.meta {
+        background: color-mix(in srgb, var(--panel) 90%, transparent);
+      }
+      .part-top {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 10px;
+      }
+      .part-head {
+        font-size: 11px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .part-title {
+        min-width: 0;
+        font-weight: 600;
+      }
+      .part-body {
+        white-space: pre-wrap;
+        font-size: 14px;
+        line-height: 1.65;
+        word-break: break-word;
+      }
+      .part-copy {
+        color: var(--muted);
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
+      .pill {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        padding: 3px 8px;
+        font-size: 11px;
+        color: var(--muted);
+      }
+      .pill.live {
+        color: var(--accent);
+        border-color: color-mix(in srgb, var(--accent) 30%, var(--line));
+      }
+      .pill.done {
+        color: var(--good);
+        border-color: color-mix(in srgb, var(--good) 30%, var(--line));
+      }
+      .pill.fail {
+        color: var(--bad);
+        border-color: color-mix(in srgb, var(--bad) 30%, var(--line));
+      }
+      .err {
+        color: var(--bad);
+        font-size: 12px;
+        white-space: pre-wrap;
+      }
+      .spin {
+        width: 12px;
+        height: 12px;
+        border-radius: 999px;
+        border: 2px solid rgba(255, 255, 255, 0.12);
+        border-top-color: var(--fg);
+        animation: spin 0.8s linear infinite;
+      }
+      .thinking {
+        display: grid;
+        grid-template-columns: auto 1fr;
+        align-items: center;
+        gap: 10px;
+        padding: 6px 4px 0;
+        color: var(--muted);
+      }
+      .thinking-copy {
+        font-size: 12px;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+      }
+      .diffs {
+        display: grid;
+        gap: 10px;
+      }
+      .diffs-head {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .diffs-title {
+        font-size: 12px;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: var(--muted);
+      }
+      .diffs-list {
+        display: grid;
+        gap: 10px;
+      }
+      .diff {
+        display: flex;
+        flex-wrap: wrap;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        border: 1px solid var(--line);
+        background: color-mix(in srgb, var(--panel) 94%, transparent);
+        border-radius: 16px;
+        padding: 12px;
+      }
+      .diff-main {
+        min-width: 0;
+        flex: 1 1 220px;
+      }
+      .path {
+        font-family: var(--mono);
+        font-size: 12px;
+        word-break: break-word;
+      }
+      .meta-line {
+        color: var(--muted);
+        font-size: 12px;
+        margin-top: 2px;
+      }
+      .composer {
+        flex-shrink: 0;
+        border-top: 1px solid var(--line);
+        padding: 12px 16px 16px;
+        background:
+          linear-gradient(180deg, color-mix(in srgb, var(--bg) 72%, transparent) 0%, color-mix(in srgb, var(--bg) 94%, black 6%) 100%),
+          color-mix(in srgb, var(--bg) 90%, black 10%);
+        display: grid;
+        gap: 10px;
+      }
+      textarea {
+        width: 100%;
+        min-height: 84px;
+        resize: vertical;
+        border: 1px solid var(--line);
+        background: var(--panel);
+        color: inherit;
+        border-radius: 12px;
+        padding: 12px;
+      }
+      textarea:focus {
+        outline: none;
+        border-color: color-mix(in srgb, var(--accent) 24%, var(--line));
+      }
+      .composer-foot {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+      }
+      .tag {
+        display: inline-flex;
+        align-items: center;
+        gap: 6px;
+        padding: 4px 8px;
+        border-radius: 999px;
+        border: 1px solid var(--line);
+        color: var(--muted);
+        font-size: 11px;
+      }
+      @keyframes spin {
+        to { transform: rotate(360deg); }
+      }
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="top">
+        <div>
+          <div class="title" id="title">opencode v2</div>
+          <div class="sub" id="sub">Loading workspace…</div>
+        </div>
+        <div class="btns">
+          <div class="status">
+            <div class="dot" id="dot"></div>
+            <div class="sub" id="conn">Idle</div>
+          </div>
+          <button id="start">New Session</button>
+          <button id="review">Review</button>
+        </div>
+      </section>
+      <section class="thread" id="thread">
+        <div class="feed" id="feed">
+          <div class="empty">Loading chat…</div>
+        </div>
+      </section>
+      <section class="composer">
+        <textarea id="input" placeholder="Ask about this codebase"></textarea>
+        <div class="composer-foot">
+          <div class="tag">Cmd/Ctrl + Enter to send</div>
+          <button class="primary" id="send">Send</button>
+        </div>
+      </section>
+    </main>
+    <script nonce="${nonce}">
+      const vscode = acquireVsCodeApi()
+      const q = (id) => document.getElementById(id)
+      const esc = (value) =>
+        String(value ?? "")
+          .replaceAll("&", "&amp;")
+          .replaceAll("<", "&lt;")
+          .replaceAll(">", "&gt;")
+          .replaceAll('"', "&quot;")
+      const make = (html) => {
+        const tpl = document.createElement("template")
+        tpl.innerHTML = html.trim()
+        return tpl.content.firstElementChild
+      }
+      const app = {
+        stick: true,
+        state: undefined,
+      }
+      const feed = q("feed")
+      const thread = q("thread")
+      const line = (value) => esc(value).replaceAll("\\n", "<br />")
+      const conn = (value) => {
+        if (value === "ready") return "Connected"
+        if (value === "starting") return "Starting"
+        if (value === "reconnecting") return "Reconnecting"
+        if (value === "down") return "Disconnected"
+        return "Idle"
+      }
+      const who = (msg) => msg.role === "user" ? "You" : "opencode"
+      const badge = (msg) => {
+        if (msg.opt) return '<span class="pill live">Sending</span>'
+        if (msg.pending) return '<span class="pill live">Streaming</span>'
+        return ""
+      }
+      const part = (item) => {
+        if (item.kind === "text") {
+          return '<div class="part text"><div class="part-body">' + line(item.text || "") + '</div></div>'
+        }
+        if (item.kind === "reasoning") {
+          return (
+            '<div class="part reasoning">' +
+            '<div class="part-top"><div class="part-head">' + esc(item.title || "Thinking") + '</div></div>' +
+            '<div class="part-body">' + line(item.text || "") + '</div>' +
+            '</div>'
+          )
+        }
+        if (item.kind === "tool") {
+          const tone =
+            item.status === "completed"
+              ? "done"
+              : item.status === "error"
+                ? "fail"
+                : "live"
+          const body = item.text ? '<div class="part-body">' + line(item.text) + '</div>' : ""
+          return (
+            '<div class="part tool">' +
+            '<div class="part-top">' +
+            '<div><div class="part-head">' + esc(item.tool || "Tool") + '</div><div class="part-title">' + esc(item.title || item.tool || "Tool") + '</div></div>' +
+            '<span class="pill ' + esc(tone) + '">' + esc(item.status || "pending") + '</span>' +
+            '</div>' +
+            body +
+            '</div>'
+          )
+        }
+        if (item.kind === "file") {
+          return (
+            '<div class="part file">' +
+            '<div class="part-top"><div><div class="part-head">Attachment</div><div class="part-title">' + esc(item.title || "File") + '</div></div></div>' +
+            (item.text ? '<div class="part-copy">' + esc(item.text) + '</div>' : "") +
+            '</div>'
+          )
+        }
+        return (
+          '<div class="part meta">' +
+          '<div class="part-top"><div><div class="part-head">' + esc(item.title || "Update") + '</div></div></div>' +
+          (item.text ? '<div class="part-copy">' + line(item.text) + '</div>' : "") +
+          '</div>'
+        )
+      }
+      const reply = (msg) => {
+        const body = msg.parts.length ? msg.parts.map(part).join("") : ""
+        const err = msg.error ? '<div class="err">' + line(msg.error) + '</div>' : ""
+        return (
+          '<article class="reply ' + esc(msg.role) + '">' +
+          '<div class="who">' + badge(msg) + '<span>' + who(msg) + '</span></div>' +
+          '<div class="card ' + esc(msg.role) + '"><div class="parts">' + body + err + '</div></div>' +
+          '</article>'
+        )
+      }
+      const diff = (item, folder) => {
+        return (
+          '<article class="diff">' +
+          '<div class="diff-main">' +
+          '<div class="path">' + esc(item.file) + '</div>' +
+          '<div class="meta-line">' + esc(item.kind + '  +' + item.add + '  -' + item.del) + '</div>' +
+          '</div>' +
+          '<div class="acts">' +
+          '<button data-act="review" data-file="' + esc(item.file) + '" data-folder="' + esc(folder) + '">Review</button>' +
+          '<button data-act="apply" data-file="' + esc(item.file) + '" data-folder="' + esc(folder) + '">Apply</button>' +
+          '<button data-act="reject" data-file="' + esc(item.file) + '" data-folder="' + esc(folder) + '">Reject</button>' +
+          '</div>' +
+          '</article>'
+        )
+      }
+      const thinking = () => {
+        return (
+          '<div class="thinking">' +
+          '<div class="spin" aria-hidden="true"></div>' +
+          '<div class="thinking-copy">Thinking…</div>' +
+          '</div>'
+        )
+      }
+      const turn = (item, folder, hash) => {
+        const diffs = item.diff.length
+          ? (
+            '<section class="diffs">' +
+            '<div class="diffs-head"><div class="diffs-title">' + esc(item.diff.length === 1 ? "1 file change" : item.diff.length + " file changes") + '</div></div>' +
+            '<div class="diffs-list">' + item.diff.map((entry) => diff(entry, folder)).join("") + '</div>' +
+            '</section>'
+          )
+          : ""
+        return make(
+          '<article class="turn' + (item.active ? " active" : "") + '" data-turn="' + esc(item.id) + '" data-hash="' + esc(hash) + '">' +
+          '<div class="turn-main">' +
+          reply(item.user) +
+          item.assistant.map(reply).join("") +
+          (item.thinking ? thinking() : "") +
+          diffs +
+          '</div>' +
+          '</article>'
+        )
+      }
+      const stamp = (value) => JSON.stringify(value)
+      const empty = (text) => {
+        feed.innerHTML = '<div class="empty">' + esc(text) + '</div>'
+      }
+      const end = () => {
+        requestAnimationFrame(() => {
+          thread.scrollTop = thread.scrollHeight
+        })
+      }
+      const patch = (state) => {
+        const list = state.box.turn
+        if (!list.length) {
+          empty("Start a session and send a prompt.")
+          return
+        }
+        Array.from(feed.children).forEach((node) => {
+          if (node.dataset.turn) return
+          node.remove()
+        })
+        const nodes = new Map(
+          Array.from(feed.querySelectorAll("[data-turn]")).map((node) => [node.dataset.turn, node]),
+        )
+        const seen = new Set()
+        list.forEach((item, index) => {
+          const hash = stamp(item)
+          let node = nodes.get(item.id)
+          if (!node || node.dataset.hash !== hash) {
+            const next = turn(item, state.box.folder, hash)
+            if (node) {
+              node.replaceWith(next)
+            }
+            node = next
+          }
+          const anchor = feed.children[index]
+          if (anchor !== node) {
+            feed.insertBefore(node, anchor || null)
+          }
+          seen.add(item.id)
+        })
+        nodes.forEach((node, key) => {
+          if (seen.has(key)) return
+          node.remove()
+        })
+      }
+      const draw = (state) => {
+        const prev = app.state
+        app.state = state
+        q("dot").className = "dot " + state.conn
+        q("conn").textContent = conn(state.conn)
+        if (!state.hasWorkspace) {
+          q("title").textContent = "opencode v2"
+          q("sub").textContent = "Open a workspace to start"
+          q("review").disabled = true
+          empty("No workspace folder is available.")
+          return
+        }
+        if (!state.box) {
+          q("title").textContent = "opencode v2"
+          q("sub").textContent = "Select a workspace file to scope the session"
+          q("review").disabled = true
+          empty("No active folder is selected.")
+          return
+        }
+        const label = state.box.title || state.box.sid || "New session"
+        q("title").textContent = label
+        q("sub").textContent = state.box.name + " · " + state.box.stat
+        q("review").disabled = state.box.diff.length === 0
+        patch(state)
+        const last = state.box.turn[state.box.turn.length - 1]
+        const old = prev?.box?.turn
+        const earlier = old ? old[old.length - 1] : undefined
+        const follow =
+          app.stick ||
+          prev?.box?.sid !== state.box.sid ||
+          (prev?.box?.turn?.length || 0) !== state.box.turn.length ||
+          stamp(last) !== stamp(earlier)
+        if (follow) end()
+      }
+      window.addEventListener("message", (event) => {
+        if (event.data?.type === "state") draw(event.data.data)
+      })
+      thread.addEventListener("scroll", () => {
+        app.stick = thread.scrollTop + thread.clientHeight >= thread.scrollHeight - 24
+      })
+      q("send").addEventListener("click", () => {
+        const text = q("input").value
+        if (!text.trim()) return
+        vscode.postMessage({ type: "prompt", text })
+        q("input").value = ""
+        app.stick = true
+        end()
+      })
+      q("input").addEventListener("keydown", (event) => {
+        if ((event.metaKey || event.ctrlKey) && event.key === "Enter") {
+          event.preventDefault()
+          q("send").click()
+        }
+      })
+      q("start").addEventListener("click", () => vscode.postMessage({ type: "start" }))
+      q("review").addEventListener("click", () => vscode.postMessage({ type: "review" }))
+      document.addEventListener("click", (event) => {
+        const node = event.target
+        if (!(node instanceof HTMLElement)) return
+        const act = node.dataset.act
+        const file = node.dataset.file
+        if (!act || !file) return
+        vscode.postMessage({ type: "file", act, file, folder: node.dataset.folder })
+      })
+      vscode.postMessage({ type: "ready" })
+    </script>
+  </body>
+</html>`;
 }
 
 let ext: Ext | undefined;
