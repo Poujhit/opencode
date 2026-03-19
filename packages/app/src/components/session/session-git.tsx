@@ -293,17 +293,17 @@ export function SessionGit() {
   }
 
   return (
-      <div class="hidden xl:flex items-center gap-2">
+      <div class="hidden xl:flex min-w-0 items-center gap-2">
         <DropdownMenu gutter={4} placement="bottom-end" onOpenChange={(open) => open && void load()}>
           <DropdownMenu.Trigger
             as={Button}
             variant="ghost"
             size="small"
-            class="h-[24px] px-2 border border-border-weak-base bg-surface-panel shadow-none gap-1.5"
+            class="h-[24px] max-w-[156px] px-2 border border-border-weak-base bg-surface-panel shadow-none gap-1.5"
             disabled={!ready() || git.branching}
           >
             <Icon name="branch" size="small" class="text-icon-base" />
-            <span class="max-w-[140px] truncate text-12-regular text-text-strong">{branch()}</span>
+            <span class="max-w-[96px] truncate text-12-regular text-text-strong 2xl:max-w-[140px]">{branch()}</span>
             <Icon name="chevron-down" size="small" class="text-icon-weak" />
           </DropdownMenu.Trigger>
           <DropdownMenu.Portal>
@@ -338,7 +338,7 @@ export function SessionGit() {
           </DropdownMenu.Portal>
         </DropdownMenu>
 
-        <div class="h-[24px] px-2 rounded-md border border-border-weak-base bg-surface-panel flex items-center text-12-regular text-text-weak">
+        <div class="hidden 2xl:flex h-[24px] px-2 rounded-md border border-border-weak-base bg-surface-panel items-center text-12-regular text-text-weak">
           <Show when={ready()} fallback={language.t("git.summary.unavailable")}>
             <Show when={git.status?.clean} fallback={summaryText(git.status?.combined)}>
               {language.t("git.summary.clean")}
@@ -346,31 +346,33 @@ export function SessionGit() {
           </Show>
         </div>
 
-        <DropdownMenu gutter={4} placement="bottom-end">
-          <DropdownMenu.Trigger
-            as={Button}
-            variant="ghost"
-            size="small"
-            class="h-[24px] px-2 border border-border-weak-base bg-surface-panel shadow-none gap-1.5"
-            disabled={!ready() || git.committing || git.pushing}
-          >
-            <span class="text-12-regular text-text-strong">{language.t("git.titlebar.actions")}</span>
-            <Icon name="chevron-down" size="small" class="text-icon-weak" />
-          </DropdownMenu.Trigger>
-          <DropdownMenu.Portal>
-            <DropdownMenu.Content>
-              <DropdownMenu.Item onSelect={openCommit} disabled={clean()}>
-                <DropdownMenu.ItemLabel>{language.t("git.action.commit")}</DropdownMenu.ItemLabel>
-              </DropdownMenu.Item>
-              <DropdownMenu.Item
-                onSelect={() => void push()}
-                disabled={!git.status?.can_push || git.pushing || clean()}
-              >
-                <DropdownMenu.ItemLabel>{language.t("git.action.push")}</DropdownMenu.ItemLabel>
-              </DropdownMenu.Item>
-            </DropdownMenu.Content>
-          </DropdownMenu.Portal>
-        </DropdownMenu>
+        <div class="flex">
+          <DropdownMenu gutter={4} placement="bottom-end">
+            <DropdownMenu.Trigger
+              as={Button}
+              variant="ghost"
+              size="small"
+              class="h-[24px] px-2 border border-border-weak-base bg-surface-panel shadow-none gap-1.5"
+              disabled={!ready() || git.committing || git.pushing}
+            >
+              <span class="text-12-regular text-text-strong">{language.t("git.titlebar.actions")}</span>
+              <Icon name="chevron-down" size="small" class="text-icon-weak" />
+            </DropdownMenu.Trigger>
+            <DropdownMenu.Portal>
+              <DropdownMenu.Content>
+                <DropdownMenu.Item onSelect={openCommit} disabled={clean()}>
+                  <DropdownMenu.ItemLabel>{language.t("git.action.commit")}</DropdownMenu.ItemLabel>
+                </DropdownMenu.Item>
+                <DropdownMenu.Item
+                  onSelect={() => void push()}
+                  disabled={!git.status?.can_push || git.pushing || clean()}
+                >
+                  <DropdownMenu.ItemLabel>{language.t("git.action.push")}</DropdownMenu.ItemLabel>
+                </DropdownMenu.Item>
+              </DropdownMenu.Content>
+            </DropdownMenu.Portal>
+          </DropdownMenu>
+        </div>
       </div>
   )
 }

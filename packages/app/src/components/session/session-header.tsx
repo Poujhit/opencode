@@ -304,7 +304,7 @@ export function SessionHeader() {
             <div class="flex items-center gap-2">
               <SessionGit />
               <Show when={projectDirectory()}>
-                <div class="hidden xl:flex items-center">
+                <div class="hidden 2xl:flex items-center">
                   <Show
                     when={canOpen()}
                     fallback={
