@@ -346,69 +346,69 @@ export namespace File {
     ".eslintrc",
   ])
 
-  function isImageByExtension(filepath: string): boolean {
-    const ext = path.extname(filepath).toLowerCase().slice(1)
-    return imageExtensions.has(ext)
-  }
+  // function isImageByExtension(filepath: string): boolean {
+  //   const ext = path.extname(filepath).toLowerCase().slice(1)
+  //   return imageExtensions.has(ext)
+  // }
 
-  function isTextByExtension(filepath: string): boolean {
-    const ext = path.extname(filepath).toLowerCase().slice(1)
-    return textExtensions.has(ext)
-  }
+  // function isTextByExtension(filepath: string): boolean {
+  //   const ext = path.extname(filepath).toLowerCase().slice(1)
+  //   return textExtensions.has(ext)
+  // }
 
-  function isTextByName(filepath: string): boolean {
-    const name = path.basename(filepath).toLowerCase()
-    return textNames.has(name)
-  }
+  // function isTextByName(filepath: string): boolean {
+  //   const name = path.basename(filepath).toLowerCase()
+  //   return textNames.has(name)
+  // }
 
-  function getImageMimeType(filepath: string): string {
-    const ext = path.extname(filepath).toLowerCase().slice(1)
-    const mimeTypes: Record<string, string> = {
-      png: "image/png",
-      jpg: "image/jpeg",
-      jpeg: "image/jpeg",
-      gif: "image/gif",
-      bmp: "image/bmp",
-      webp: "image/webp",
-      ico: "image/x-icon",
-      tif: "image/tiff",
-      tiff: "image/tiff",
-      svg: "image/svg+xml",
-      svgz: "image/svg+xml",
-      avif: "image/avif",
-      apng: "image/apng",
-      jxl: "image/jxl",
-      heic: "image/heic",
-      heif: "image/heif",
-    }
-    return mimeTypes[ext] || "image/" + ext
-  }
+  // function getImageMimeType(filepath: string): string {
+  //   const ext = path.extname(filepath).toLowerCase().slice(1)
+  //   const mimeTypes: Record<string, string> = {
+  //     png: "image/png",
+  //     jpg: "image/jpeg",
+  //     jpeg: "image/jpeg",
+  //     gif: "image/gif",
+  //     bmp: "image/bmp",
+  //     webp: "image/webp",
+  //     ico: "image/x-icon",
+  //     tif: "image/tiff",
+  //     tiff: "image/tiff",
+  //     svg: "image/svg+xml",
+  //     svgz: "image/svg+xml",
+  //     avif: "image/avif",
+  //     apng: "image/apng",
+  //     jxl: "image/jxl",
+  //     heic: "image/heic",
+  //     heif: "image/heif",
+  //   }
+  //   return mimeTypes[ext] || "image/" + ext
+  // }
 
-  function isBinaryByExtension(filepath: string): boolean {
-    const ext = path.extname(filepath).toLowerCase().slice(1)
-    return binaryExtensions.has(ext)
-  }
+  // function isBinaryByExtension(filepath: string): boolean {
+  //   const ext = path.extname(filepath).toLowerCase().slice(1)
+  //   return binaryExtensions.has(ext)
+  // }
 
-  function isImage(mimeType: string): boolean {
-    return mimeType.startsWith("image/")
-  }
+  // function isImage(mimeType: string): boolean {
+  //   return mimeType.startsWith("image/")
+  // }
 
-  async function shouldEncode(mimeType: string): Promise<boolean> {
-    const type = mimeType.toLowerCase()
-    log.info("shouldEncode", { type })
-    if (!type) return false
+  // async function shouldEncode(mimeType: string): Promise<boolean> {
+  //   const type = mimeType.toLowerCase()
+  //   log.info("shouldEncode", { type })
+  //   if (!type) return false
 
-    if (type.startsWith("text/")) return false
-    if (type.includes("charset=")) return false
+  //   if (type.startsWith("text/")) return false
+  //   if (type.includes("charset=")) return false
 
-    const parts = type.split("/", 2)
-    const top = parts[0]
+  //   const parts = type.split("/", 2)
+  //   const top = parts[0]
 
-    const tops = ["image", "audio", "video", "font", "model", "multipart"]
-    if (tops.includes(top)) return true
+  //   const tops = ["image", "audio", "video", "font", "model", "multipart"]
+  //   if (tops.includes(top)) return true
 
-    return false
-  }
+  //   return false
+  // }
 
   function guardQuery(query: string) {
     const value = query.trim()
@@ -603,7 +603,9 @@ export namespace File {
     const next = guardReplace(input.replace)
     const paths = input.paths?.length
       ? input.paths.map((item) => item.replaceAll("\\", "/"))
-      : (await preview({ search, replace: next, sensitive: input.sensitive, word: input.word })).files.map((item) => item.path)
+      : (await preview({ search, replace: next, sensitive: input.sensitive, word: input.word })).files.map(
+          (item) => item.path,
+        )
 
     const files: string[] = []
     let replacements = 0
