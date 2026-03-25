@@ -58,7 +58,7 @@ export namespace LSPClient {
       })
       const exists = diagnostics.has(filePath)
       diagnostics.set(filePath, params.diagnostics)
-      if (!exists && input.serverID === "typescript") return
+      if (!exists && input.serverID === "typescript" && params.diagnostics.length === 0) return
       Bus.publish(Event.Diagnostics, { path: filePath, serverID: input.serverID })
     })
     connection.onRequest("window/workDoneProgress/create", (params) => {
@@ -137,6 +137,53 @@ export namespace LSPClient {
       [path: string]: number
     } = {}
 
+    const open = async (input: { path: string; content: string; version: number }) => {
+      input.path = path.isAbsolute(input.path) ? input.path : path.resolve(Instance.directory, input.path)
+      const extension = path.extname(input.path)
+      const languageId = LANGUAGE_EXTENSIONS[extension] ?? "plaintext"
+      log.info("textDocument/didOpen", { path: input.path, version: input.version })
+      diagnostics.delete(input.path)
+      await connection.sendNotification("textDocument/didOpen", {
+        textDocument: {
+          uri: pathToFileURL(input.path).href,
+          languageId,
+          version: input.version,
+          text: input.content,
+        },
+      })
+      files[input.path] = input.version
+    }
+
+    const change = async (input: { path: string; content: string; version: number }) => {
+      input.path = path.isAbsolute(input.path) ? input.path : path.resolve(Instance.directory, input.path)
+      if (files[input.path] === undefined) return open(input)
+      log.info("textDocument/didChange", {
+        path: input.path,
+        version: input.version,
+      })
+      await connection.sendNotification("textDocument/didChange", {
+        textDocument: {
+          uri: pathToFileURL(input.path).href,
+          version: input.version,
+        },
+        contentChanges: [{ text: input.content }],
+      })
+      files[input.path] = input.version
+    }
+
+    const close = async (input: { path: string }) => {
+      input.path = path.isAbsolute(input.path) ? input.path : path.resolve(Instance.directory, input.path)
+      if (files[input.path] === undefined) return
+      log.info("textDocument/didClose", { path: input.path })
+      await connection.sendNotification("textDocument/didClose", {
+        textDocument: {
+          uri: pathToFileURL(input.path).href,
+        },
+      })
+      diagnostics.delete(input.path)
+      delete files[input.path]
+    }
+
     const result = {
       root: input.root,
       get serverID() {
@@ -203,6 +250,11 @@ export namespace LSPClient {
           files[input.path] = 0
           return
         },
+      },
+      document: {
+        open,
+        change,
+        close,
       },
       get diagnostics() {
         return diagnostics

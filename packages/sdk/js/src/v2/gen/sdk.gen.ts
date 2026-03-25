@@ -59,6 +59,14 @@ import type {
   GlobalUpgradeErrors,
   GlobalUpgradeResponses,
   InstanceDisposeResponses,
+  LspEditorCloseErrors,
+  LspEditorCloseResponses,
+  LspEditorDefinitionErrors,
+  LspEditorDefinitionResponses,
+  LspEditorDiagnosticsErrors,
+  LspEditorDiagnosticsResponses,
+  LspEditorSyncErrors,
+  LspEditorSyncResponses,
   LspStatusResponses,
   McpAddErrors,
   McpAddResponses,
@@ -4340,6 +4348,156 @@ export class Lsp extends HeyApiClient {
       url: "/lsp",
       ...options,
       ...params,
+    })
+  }
+
+  /**
+   * Get editor diagnostics
+   *
+   * Get latest editor LSP diagnostics for a single file
+   */
+  public editorDiagnostics<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      workspace?: string
+      path: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "path" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<
+      LspEditorDiagnosticsResponses,
+      LspEditorDiagnosticsErrors,
+      ThrowOnError
+    >({
+      url: "/lsp/editor/diagnostics",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Get editor definition
+   *
+   * Resolve editor LSP definitions for a symbol in a file
+   */
+  public editorDefinition<ThrowOnError extends boolean = false>(
+    parameters: {
+      directory?: string
+      workspace?: string
+      file: string
+      line: number
+      character: number
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "query", key: "file" },
+            { in: "query", key: "line" },
+            { in: "query", key: "character" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).get<LspEditorDefinitionResponses, LspEditorDefinitionErrors, ThrowOnError>({
+      url: "/lsp/editor/definition",
+      ...options,
+      ...params,
+    })
+  }
+
+  /**
+   * Sync editor document
+   *
+   * Sync the current editor buffer into LSP
+   */
+  public editorSync<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      path?: string
+      content?: string
+      version?: number
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "path" },
+            { in: "body", key: "content" },
+            { in: "body", key: "version" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<LspEditorSyncResponses, LspEditorSyncErrors, ThrowOnError>({
+      url: "/lsp/editor/sync",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
+    })
+  }
+
+  /**
+   * Close editor document
+   *
+   * Close an editor-tracked LSP document
+   */
+  public editorClose<ThrowOnError extends boolean = false>(
+    parameters?: {
+      directory?: string
+      workspace?: string
+      path?: string
+    },
+    options?: Options<never, ThrowOnError>,
+  ) {
+    const params = buildClientParams(
+      [parameters],
+      [
+        {
+          args: [
+            { in: "query", key: "directory" },
+            { in: "query", key: "workspace" },
+            { in: "body", key: "path" },
+          ],
+        },
+      ],
+    )
+    return (options?.client ?? this.client).post<LspEditorCloseResponses, LspEditorCloseErrors, ThrowOnError>({
+      url: "/lsp/editor/close",
+      ...options,
+      ...params,
+      headers: {
+        "Content-Type": "application/json",
+        ...options?.headers,
+        ...params.headers,
+      },
     })
   }
 }

@@ -755,6 +755,126 @@ export namespace Server {
         },
       )
       .get(
+        "/lsp/editor/diagnostics",
+        describeRoute({
+          summary: "Get editor diagnostics",
+          description: "Get latest editor LSP diagnostics for a single file",
+          operationId: "lsp.editorDiagnostics",
+          responses: {
+            200: {
+              description: "Editor LSP diagnostics",
+              content: {
+                "application/json": {
+                  schema: resolver(LSP.Issue.array()),
+                },
+              },
+            },
+            ...errors(400),
+          },
+        }),
+        validator(
+          "query",
+          z.object({
+            path: z.string(),
+          }),
+        ),
+        async (c) => {
+          const input = c.req.valid("query").path
+          return c.json(await LSP.editorDiagnosticsFor(input))
+        },
+      )
+      .get(
+        "/lsp/editor/definition",
+        describeRoute({
+          summary: "Get editor definition",
+          description: "Resolve editor LSP definitions for a symbol in a file",
+          operationId: "lsp.editorDefinition",
+          responses: {
+            200: {
+              description: "Editor LSP definitions",
+              content: {
+                "application/json": {
+                  schema: resolver(LSP.Location.array()),
+                },
+              },
+            },
+            ...errors(400),
+          },
+        }),
+        validator(
+          "query",
+          z.object({
+            file: z.string(),
+            line: z.coerce.number(),
+            character: z.coerce.number(),
+          }),
+        ),
+        async (c) => {
+          const input = c.req.valid("query")
+          return c.json(await LSP.editorDefinitionFor(input))
+        },
+      )
+      .post(
+        "/lsp/editor/sync",
+        describeRoute({
+          summary: "Sync editor document",
+          description: "Sync the current editor buffer into LSP",
+          operationId: "lsp.editorSync",
+          responses: {
+            200: {
+              description: "Editor document synced",
+              content: {
+                "application/json": {
+                  schema: resolver(z.boolean()),
+                },
+              },
+            },
+            ...errors(400),
+          },
+        }),
+        validator(
+          "json",
+          z.object({
+            path: z.string(),
+            content: z.string(),
+            version: z.number(),
+          }),
+        ),
+        async (c) => {
+          await LSP.syncEditorFile(c.req.valid("json"))
+          return c.json(true)
+        },
+      )
+      .post(
+        "/lsp/editor/close",
+        describeRoute({
+          summary: "Close editor document",
+          description: "Close an editor-tracked LSP document",
+          operationId: "lsp.editorClose",
+          responses: {
+            200: {
+              description: "Editor document closed",
+              content: {
+                "application/json": {
+                  schema: resolver(z.boolean()),
+                },
+              },
+            },
+            ...errors(400),
+          },
+        }),
+        validator(
+          "json",
+          z.object({
+            path: z.string(),
+          }),
+        ),
+        async (c) => {
+          await LSP.closeEditorFile(c.req.valid("json").path)
+          return c.json(true)
+        },
+      )
+      .get(
         "/formatter",
         describeRoute({
           summary: "Get formatter status",

@@ -27,11 +27,13 @@ import {
   selectionFromLines,
   type FileState,
   type FileSelection,
+  type LspDiagnostic,
+  type LspLocation,
   type FileViewState,
   type SelectedLineRange,
 } from "./file/types"
 
-export type { FileSelection, SelectedLineRange, FileViewState, FileState }
+export type { FileSelection, SelectedLineRange, FileViewState, FileState, LspDiagnostic, LspLocation }
 export { selectionFromLines }
 export {
   evictContentLru,
@@ -64,6 +66,9 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const tabs = layout.tabs(() => `${params.dir}${params.id ? "/" + params.id : ""}`)
 
     const inflight = new Map<string, Promise<void>>()
+    const diag = new Map<string, number>()
+    const diagBusy = new Set<string>()
+    const edit = new Map<string, { version: number; content: string; timer?: ReturnType<typeof setTimeout> }>()
     const [store, setStore] = createStore<{
       file: Record<string, FileState>
     }>({
@@ -100,6 +105,12 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     createEffect(() => {
       scope()
       inflight.clear()
+      diag.clear()
+      diagBusy.clear()
+      for (const item of edit.values()) {
+        if (item.timer) clearTimeout(item.timer)
+      }
+      edit.clear()
       resetFileContentLru()
       batch(() => {
         setStore("file", reconcile({}))
@@ -155,6 +166,81 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       })
     }
 
+    const syncDiagnostics = (input: string) => {
+      const file = path.normalize(input)
+      if (!file) return Promise.resolve()
+      if (diagBusy.has(file)) return Promise.resolve()
+
+      const dir = scope()
+      const id = (diag.get(file) ?? 0) + 1
+      diag.set(file, id)
+      diagBusy.add(file)
+
+      return sdk.client.lsp
+        .editorDiagnostics({ path: file })
+        .then((x) => {
+          if (scope() !== dir) return
+          if (diag.get(file) !== id) return
+          setStore(
+            "file",
+            file,
+            produce((draft) => {
+              draft.diagnostics = x.data ?? []
+            }),
+          )
+        })
+        .catch(() => {
+          if (scope() !== dir) return
+          if (diag.get(file) !== id) return
+        })
+        .finally(() => {
+          diagBusy.delete(file)
+        })
+    }
+
+    const pushEditor = (file: string, item: { version: number; content: string }) =>
+      sdk.client.lsp
+        .editorSync({
+          path: file,
+          content: item.content,
+          version: item.version,
+        })
+        .then(() => syncDiagnostics(file))
+        .catch(() => {})
+
+    const syncEditor = (input: string, content: string, wait = 200) => {
+      const file = path.normalize(input)
+      if (!file) return Promise.resolve()
+      ensure(file)
+      const item = edit.get(file) ?? { version: -1, content }
+      item.version += 1
+      item.content = content
+      if (item.timer) clearTimeout(item.timer)
+      edit.set(file, item)
+      if (wait <= 0) return pushEditor(file, item)
+      return new Promise<void>((resolve) => {
+        item.timer = setTimeout(() => {
+          item.timer = undefined
+          void pushEditor(file, item).finally(resolve)
+        }, wait)
+      })
+    }
+
+    const closeEditor = (input: string) => {
+      const file = path.normalize(input)
+      if (!file) return Promise.resolve()
+      const item = edit.get(file)
+      if (item?.timer) clearTimeout(item.timer)
+      edit.delete(file)
+      return sdk.client.lsp.editorClose({ path: file }).catch(() => {})
+    }
+
+    const editorDefinition = (input: { file: string; line: number; character: number }) =>
+      sdk.client.lsp
+        .editorDefinition(input)
+        .then((x) => x.data ?? [])
+        .catch(() => [])
+
     const load = (input: string, options?: { force?: boolean }) => {
       const file = path.normalize(input)
       if (!file) return Promise.resolve()
@@ -201,7 +287,8 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       )
 
     const stop = sdk.event.listen((e) => {
-      invalidateFromWatcher(e.details, {
+      const event = e.details
+      invalidateFromWatcher(event, {
         normalize: path.normalize,
         hasFile: (file) => Boolean(store.file[file]),
         isOpen: (file) => tabs.all().some((tab) => path.pathFromTab(tab) === file),
@@ -214,6 +301,12 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
           void tree.listDir(dir, { force: true })
         },
       })
+
+      if (event.type !== "lsp.client.diagnostics") return
+      const file = path.normalize(event.properties.path)
+      if (!file) return
+      if (!store.file[file] && !tabs.all().some((tab) => path.pathFromTab(tab) === file)) return
+      void syncDiagnostics(file)
     })
 
     const get = (input: string) => {
@@ -235,6 +328,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
     const scrollTop = (input: string) => withPath(input, (file) => view().scrollTop(file))
     const scrollLeft = (input: string) => withPath(input, (file) => view().scrollLeft(file))
     const selectedLines = (input: string) => withPath(input, (file) => view().selectedLines(file))
+    const diagnostics = (input: string) => withPath(input, (file) => store.file[file]?.diagnostics)
     const setScrollTop = (input: string, top: number) => withPath(input, (file) => view().setScrollTop(file, top))
     const setScrollLeft = (input: string, left: number) => withPath(input, (file) => view().setScrollLeft(file, left))
     const setSelectedLines = (input: string, range: SelectedLineRange | null) =>
@@ -258,7 +352,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
         throw new Error(
           typeof response.error === "string"
             ? response.error
-            : (response.error as any)?.message ?? (response.error as any)?.error ?? "Failed to save file"
+            : ((response.error as any)?.message ?? (response.error as any)?.error ?? "Failed to save file"),
         )
       }
 
@@ -291,6 +385,11 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       save,
       scrollTop,
       scrollLeft,
+      diagnostics,
+      refreshEditorDiagnostics: syncDiagnostics,
+      syncEditor,
+      closeEditor,
+      editorDefinition,
       setScrollTop,
       setScrollLeft,
       selectedLines,
