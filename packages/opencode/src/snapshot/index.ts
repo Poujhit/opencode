@@ -1,6 +1,7 @@
 import { NodeFileSystem, NodePath } from "@effect/platform-node"
-import { Cause, Duration, Effect, Layer, Schedule, ServiceMap, Stream } from "effect"
+import { Cause, Duration, Effect, Layer, Option, Schedule, ServiceMap, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
+import os from "os"
 import path from "path"
 import z from "zod"
 import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
@@ -107,11 +108,65 @@ export namespace Snapshot {
 
             const exists = (file: string) => fs.exists(file).pipe(Effect.orDie)
             const read = (file: string) => fs.readFileString(file).pipe(Effect.catch(() => Effect.succeed("")))
-            const remove = (file: string) => fs.remove(file).pipe(Effect.catch(() => Effect.void))
+            const remove = (file: string) => fs.remove(file, { recursive: true }).pipe(Effect.catch(() => Effect.void))
+            const lock = path.join(state.gitdir, "gc.pid.lock")
+            const mark = path.join(state.gitdir, "gc.pid")
 
             const enabled = Effect.fnUntraced(function* () {
               if (state.vcs !== "git") return false
               return (yield* Effect.promise(() => Config.get())).snapshot !== false
+            })
+
+            const live = Effect.fnUntraced(function* () {
+              if (!(yield* exists(mark))) return false
+              const [raw, host] = (yield* read(mark)).trim().split(/\s+/, 2)
+              const pid = Number(raw)
+              if (!Number.isSafeInteger(pid) || pid < 1) return false
+              if (host && host !== os.hostname()) return false
+              try {
+                process.kill(pid, 0)
+                return true
+              } catch (err) {
+                return (err as NodeJS.ErrnoException).code === "EPERM"
+              }
+            })
+
+            const stale = Effect.fnUntraced(function* (file: string) {
+              const stat = yield* fs.stat(file).pipe(Effect.catch(() => Effect.void))
+              if (!stat?.mtime) return false
+              const time = (() => {
+                const m = stat.mtime
+                if (typeof m === "number") return m
+                if (m instanceof Date) return m.getTime()
+                if (typeof m === "object" && m && "_tag" in m) {
+                  if (Option.isNone(m as Option.Option<Date>)) return Number.NaN
+                  return (m as Option.Some<Date>).value.getTime()
+                }
+                return new Date(m as string | number | Date).getTime()
+              })()
+              if (!Number.isFinite(time)) return false
+              return Date.now() - time > 60_000
+            })
+
+            const heal = Effect.fnUntraced(function* (stderr: string) {
+              if (stderr.includes("gc.pid.lock")) {
+                if (!(yield* exists(lock))) return false
+                if (yield* live()) return false
+                if (!(yield* stale(lock))) return false
+                if (yield* exists(mark)) {
+                  yield* remove(mark)
+                  log.info("removed stale gc pid", { file: mark })
+                }
+                yield* remove(lock)
+                log.info("removed stale gc lock", { file: lock })
+                return true
+              }
+              if (!stderr.includes("gc is already running")) return false
+              if (!(yield* exists(mark))) return false
+              if (yield* live()) return false
+              yield* remove(mark)
+              log.info("removed stale gc pid", { file: mark })
+              return true
             })
 
             const excludes = Effect.fnUntraced(function* () {
@@ -192,7 +247,16 @@ export namespace Snapshot {
             const cleanup = Effect.fnUntraced(function* () {
               if (!(yield* enabled())) return
               if (!(yield* exists(state.gitdir))) return
-              const result = yield* git(args(["gc", `--prune=${prune}`]), { cwd: state.directory })
+              let result = yield* git(args(["gc", `--prune=${prune}`]), { cwd: state.directory })
+              let healed = false
+              if (result.code !== 0 && (yield* heal(result.stderr))) {
+                healed = true
+                result = yield* git(args(["gc", `--prune=${prune}`]), { cwd: state.directory })
+              }
+              if (result.code !== 0 && (yield* heal(result.stderr))) {
+                healed = true
+                result = yield* git(args(["gc", `--prune=${prune}`]), { cwd: state.directory })
+              }
               if (result.code !== 0) {
                 log.warn("cleanup failed", {
                   exitCode: result.code,
@@ -200,7 +264,7 @@ export namespace Snapshot {
                 })
                 return
               }
-              log.info("cleanup", { prune })
+              log.info("cleanup", healed ? { prune, healed } : { prune })
             })
 
             const track = Effect.fnUntraced(function* () {
