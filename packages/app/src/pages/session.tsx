@@ -1,5 +1,6 @@
 import type { Project, UserMessage } from "@opencode-ai/sdk/v2"
 import { useDialog } from "@opencode-ai/ui/context/dialog"
+import { useMutation } from "@tanstack/solid-query"
 import {
   batch,
   onCleanup,
@@ -40,7 +41,13 @@ import { useSync } from "@/context/sync"
 import { useTerminal } from "@/context/terminal"
 import { type FollowupDraft, sendFollowupDraft } from "@/components/prompt-input/submit"
 import { createSessionComposerState, SessionComposerRegion } from "@/pages/session/composer"
-import { createOpenReviewFile, createSessionTabs, createSizing, focusTerminalById } from "@/pages/session/helpers"
+import {
+  createOpenReviewFile,
+  createSessionTabs,
+  createSizing,
+  focusTerminalById,
+  shouldFocusTerminalOnKeyDown,
+} from "@/pages/session/helpers"
 import { MessageTimeline } from "@/pages/session/message-timeline"
 import { type DiffStyle, SessionReviewTab, type SessionReviewTabProps } from "@/pages/session/review-tab"
 import { useSessionLayout } from "@/pages/session/session-layout"
@@ -240,14 +247,19 @@ function createSessionHistoryWindow(input: SessionHistoryWindowInput) {
 
     if (added <= 0) return
     if (growth <= 0) return
+
+    if (opts?.prefetch) {
+      const current = turnStart()
+      preserveScroll(() => setTurnStart(current + growth))
+      return
+    }
+
     if (turnStart() !== start) return
 
-    const reveal = !opts?.prefetch
     const currentRendered = renderedUserMessages().length
     const base = Math.max(beforeRendered, currentRendered)
-    const target = reveal ? Math.min(afterVisible, base + turnBatch) : base
-    const nextStart = Math.max(0, afterVisible - target)
-    preserveScroll(() => setTurnStart(nextStart))
+    const target = Math.min(afterVisible, base + turnBatch)
+    preserveScroll(() => setTurnStart(Math.max(0, afterVisible - target)))
   }
 
   const onScrollerScroll = () => {
@@ -328,16 +340,15 @@ export default function Page() {
   })
 
   const [ui, setUi] = createStore({
-    git: false,
     pendingMessage: undefined as string | undefined,
-    restoring: undefined as string | undefined,
-    reverting: false,
     reviewSnap: false,
     scrollGesture: 0,
     scroll: {
       overflow: false,
       bottom: true,
     },
+    restoring: undefined as string | undefined,
+    reverting: false,
   })
 
   const composer = createSessionComposerState()
@@ -507,7 +518,6 @@ export default function Page() {
 
   const [followup, setFollowup] = createStore({
     items: {} as Record<string, (FollowupDraft & { id: string })[] | undefined>,
-    sending: {} as Record<string, string | undefined>,
     failed: {} as Record<string, string | undefined>,
     paused: {} as Record<string, boolean | undefined>,
     edit: {} as Record<
@@ -645,25 +655,23 @@ export default function Page() {
     globalSync.set("project", [...list, next])
   }
 
+  const gitMutation = useMutation(() => ({
+    mutationFn: async () => {
+      const result = await sdk.client.project.initGit()
+      if (result.data) upsert(result.data)
+    },
+    onError: (err: unknown) => {
+      showToast({
+        variant: "error",
+        title: language.t("common.requestFailed"),
+        description: formatServerError(err, language.t),
+      })
+    },
+  }))
+
   function initGit() {
-    if (ui.git) return
-    setUi("git", true)
-    void sdk.client.project
-      .initGit()
-      .then((x) => {
-        if (!x.data) return
-        upsert(x.data)
-      })
-      .catch((err) => {
-        showToast({
-          variant: "error",
-          title: language.t("common.requestFailed"),
-          description: formatServerError(err, language.t),
-        })
-      })
-      .finally(() => {
-        setUi("git", false)
-      })
+    if (gitMutation.isPending) return
+    gitMutation.mutate()
   }
 
   let inputRef!: HTMLDivElement
@@ -851,7 +859,7 @@ export default function Page() {
     // Prefer the open terminal over the composer when it can take focus
     if (view().terminal.opened()) {
       const id = terminal.active()
-      if (id && focusTerminalById(id)) return
+      if (id && shouldFocusTerminalOnKeyDown(event) && focusTerminalById(id)) return
     }
 
     // Only treat explicit scroll keys as potential "user scroll" gestures.
@@ -958,8 +966,8 @@ export default function Page() {
               {language.t("session.review.noVcs.createGit.description")}
             </div>
           </div>
-          <Button size="large" disabled={ui.git} onClick={initGit}>
-            {ui.git
+          <Button size="large" disabled={gitMutation.isPending} onClick={initGit}>
+            {gitMutation.isPending
               ? language.t("session.review.noVcs.createGit.actionLoading")
               : language.t("session.review.noVcs.createGit.action")}
           </Button>
@@ -1175,8 +1183,6 @@ export default function Page() {
     on(
       () => sdk.directory,
       () => {
-        void file.tree.list("")
-
         const tab = activeFileTab()
         if (!tab) return
         const path = file.pathFromTab(tab)
@@ -1385,10 +1391,40 @@ export default function Page() {
     return followup.edit[id]
   })
 
+  const followupMutation = useMutation(() => ({
+    mutationFn: async (input: { sessionID: string; id: string; manual?: boolean }) => {
+      const item = (followup.items[input.sessionID] ?? []).find((entry) => entry.id === input.id)
+      if (!item) return
+
+      if (input.manual) setFollowup("paused", input.sessionID, undefined)
+      setFollowup("failed", input.sessionID, undefined)
+
+      const ok = await sendFollowupDraft({
+        client: sdk.client,
+        sync,
+        globalSync,
+        draft: item,
+        optimisticBusy: item.sessionDirectory === sdk.directory,
+      }).catch((err) => {
+        setFollowup("failed", input.sessionID, input.id)
+        fail(err)
+        return false
+      })
+      if (!ok) return
+
+      setFollowup("items", input.sessionID, (items) => (items ?? []).filter((entry) => entry.id !== input.id))
+      if (input.manual) resumeScroll()
+    },
+  }))
+
+  const followupBusy = (sessionID: string) =>
+    followupMutation.isPending && followupMutation.variables?.sessionID === sessionID
+
   const sendingFollowup = createMemo(() => {
     const id = params.id
     if (!id) return
-    return followup.sending[id]
+    if (!followupBusy(id)) return
+    return followupMutation.variables?.id
   })
 
   const queueEnabled = createMemo(() => {
@@ -1428,37 +1464,15 @@ export default function Page() {
   const sendFollowup = (sessionID: string, id: string, opts?: { manual?: boolean }) => {
     const item = (followup.items[sessionID] ?? []).find((entry) => entry.id === id)
     if (!item) return Promise.resolve()
-    if (followup.sending[sessionID]) return Promise.resolve()
+    if (followupBusy(sessionID)) return Promise.resolve()
 
-    if (opts?.manual) setFollowup("paused", sessionID, undefined)
-    setFollowup("sending", sessionID, id)
-    setFollowup("failed", sessionID, undefined)
-
-    return sendFollowupDraft({
-      client: sdk.client,
-      sync,
-      globalSync,
-      draft: item,
-      optimisticBusy: item.sessionDirectory === sdk.directory,
-    })
-      .then((ok) => {
-        if (ok === false) return
-        setFollowup("items", sessionID, (items) => (items ?? []).filter((entry) => entry.id !== id))
-        if (opts?.manual) resumeScroll()
-      })
-      .catch((err) => {
-        setFollowup("failed", sessionID, id)
-        fail(err)
-      })
-      .finally(() => {
-        setFollowup("sending", sessionID, (value) => (value === id ? undefined : value))
-      })
+    return followupMutation.mutateAsync({ sessionID, id, manual: opts?.manual })
   }
 
   const editFollowup = (id: string) => {
     const sessionID = params.id
     if (!sessionID) return
-    if (followup.sending[sessionID]) return
+    if (followupBusy(sessionID)) return
 
     const item = queuedFollowups().find((entry) => entry.id === id)
     if (!item) return
@@ -1481,6 +1495,77 @@ export default function Page() {
   const halt = (sessionID: string) =>
     busy(sessionID) ? sdk.client.session.abort({ sessionID }).catch(() => { }) : Promise.resolve()
 
+  const revertMutation = useMutation(() => ({
+    mutationFn: async (input: { sessionID: string; messageID: string }) => {
+      const prev = prompt.current().slice()
+      const last = info()?.revert
+      const value = draft(input.messageID)
+      batch(() => {
+        roll(input.sessionID, { messageID: input.messageID })
+        prompt.set(value)
+      })
+      await halt(input.sessionID)
+        .then(() => sdk.client.session.revert(input))
+        .then((result) => {
+          if (result.data) merge(result.data)
+        })
+        .catch((err) => {
+          batch(() => {
+            roll(input.sessionID, last)
+            prompt.set(prev)
+          })
+          fail(err)
+        })
+    },
+  }))
+
+  const restoreMutation = useMutation(() => ({
+    mutationFn: async (id: string) => {
+      const sessionID = params.id
+      if (!sessionID) return
+
+      const next = userMessages().find((item) => item.id > id)
+      const prev = prompt.current().slice()
+      const last = info()?.revert
+
+      batch(() => {
+        roll(sessionID, next ? { messageID: next.id } : undefined)
+        if (next) {
+          prompt.set(draft(next.id))
+          return
+        }
+        prompt.reset()
+      })
+
+      const task = !next
+        ? halt(sessionID).then(() => sdk.client.session.unrevert({ sessionID }))
+        : halt(sessionID).then(() =>
+          sdk.client.session.revert({
+            sessionID,
+            messageID: next.id,
+          }),
+        )
+
+      await task
+        .then((result) => {
+          if (result.data) merge(result.data)
+        })
+        .catch((err) => {
+          batch(() => {
+            roll(sessionID, last)
+            prompt.set(prev)
+          })
+          fail(err)
+        })
+    },
+  }))
+
+  const reverting = createMemo(() => revertMutation.isPending || restoreMutation.isPending || ui.reverting)
+  const restoring = createMemo(() => {
+    if (restoreMutation.isPending) return restoreMutation.variables
+    return ui.restoring
+  })
+
   const fork = (input: { sessionID: string; messageID: string }) => {
     const value = draft(input.messageID)
     const dir = base64Encode(sdk.directory)
@@ -1502,30 +1587,8 @@ export default function Page() {
   }
 
   const revert = (input: { sessionID: string; messageID: string }) => {
-    if (ui.reverting || ui.restoring) return
-    const prev = prompt.current().slice()
-    const last = info()?.revert
-    const value = draft(input.messageID)
-    batch(() => {
-      setUi("reverting", true)
-      roll(input.sessionID, { messageID: input.messageID })
-      prompt.set(value)
-    })
-    return halt(input.sessionID)
-      .then(() => sdk.client.session.revert(input))
-      .then((result) => {
-        if (result.data) merge(result.data)
-      })
-      .catch((err) => {
-        batch(() => {
-          roll(input.sessionID, last)
-          prompt.set(prev)
-        })
-        fail(err)
-      })
-      .finally(() => {
-        setUi("reverting", false)
-      })
+    if (reverting()) return
+    return revertMutation.mutateAsync(input)
   }
 
   const restore = (id: string) => {
@@ -1580,6 +1643,8 @@ export default function Page() {
           setUi("reverting", false)
         })
       })
+    // if (!params.id || reverting()) return
+    // return restoreMutation.mutateAsync(id)
   }
 
   const rolled = createMemo(() => {
@@ -1598,7 +1663,7 @@ export default function Page() {
 
     const item = queuedFollowups()[0]
     if (!item) return
-    if (followup.sending[sessionID]) return
+    if (followupBusy(sessionID)) return
     if (followup.failed[sessionID] === item.id) return
     if (followup.paused[sessionID]) return
     if (composer.blocked()) return
@@ -1636,6 +1701,9 @@ export default function Page() {
     sessionID: () => params.id,
     messagesReady,
     visibleUserMessages,
+    historyMore,
+    historyLoading,
+    loadMore: (sessionID) => sync.session.history.loadMore(sessionID),
     turnStart: historyWindow.turnStart,
     currentMessageId: () => store.messageId,
     pendingMessage: () => ui.pendingMessage,
@@ -1708,7 +1776,7 @@ export default function Page() {
           <div class="flex-1 min-h-0 overflow-hidden">
             <Switch>
               <Match when={params.id}>
-                <Show when={lastUserMessage()}>
+                <Show when={messagesReady()}>
                   <MessageTimeline
                     mobileChanges={mobileChanges()}
                     mobileFallback={reviewContent({
@@ -1805,11 +1873,11 @@ export default function Page() {
             revert={
               rolled().length > 0
                 ? {
-                    items: rolled(),
-                    restoring: ui.restoring,
-                    disabled: ui.reverting,
-                    onRestore: restore,
-                  }
+                  items: rolled(),
+                  restoring: restoring(),
+                  disabled: reverting(),
+                  onRestore: restore,
+                }
                 : undefined
             }
             setPromptDockRef={(el) => {

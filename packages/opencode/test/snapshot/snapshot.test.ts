@@ -1,7 +1,9 @@
-import { test, expect } from "bun:test"
+import { afterEach, test, expect } from "bun:test"
 import { $ } from "bun"
 import fs from "fs/promises"
+import os from "os"
 import path from "path"
+import { Global } from "../../src/global"
 import { Snapshot } from "../../src/snapshot"
 import { Instance } from "../../src/project/instance"
 import { Filesystem } from "../../src/util/filesystem"
@@ -11,6 +13,15 @@ import { tmpdir } from "../fixture/fixture"
 // with path.join (which produces \ on Windows) then normalizes back to /.
 // This helper does the same for expected values so assertions match cross-platform.
 const fwd = (...parts: string[]) => path.join(...parts).replaceAll("\\", "/")
+const has = (file: string) =>
+  fs
+    .access(file)
+    .then(() => true)
+    .catch(() => false)
+
+afterEach(async () => {
+  await Instance.disposeAll()
+})
 
 async function bootstrap() {
   return tmpdir({
@@ -177,7 +188,7 @@ test("symlink handling", async () => {
   })
 })
 
-test("large file handling", async () => {
+test("file under size limit handling", async () => {
   await using tmp = await bootstrap()
   await Instance.provide({
     directory: tmp.path,
@@ -188,6 +199,23 @@ test("large file handling", async () => {
       await Filesystem.write(`${tmp.path}/large.txt`, "x".repeat(1024 * 1024))
 
       expect((await Snapshot.patch(before!)).files).toContain(fwd(tmp.path, "large.txt"))
+    },
+  })
+})
+
+test("large added files are skipped", async () => {
+  await using tmp = await bootstrap()
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      const before = await Snapshot.track()
+      expect(before).toBeTruthy()
+
+      await Filesystem.write(`${tmp.path}/huge.txt`, new Uint8Array(2 * 1024 * 1024 + 1))
+
+      expect((await Snapshot.patch(before!)).files).toEqual([])
+      expect(await Snapshot.diff(before!)).toBe("")
+      expect(await Snapshot.track()).toBe(before)
     },
   })
 })
@@ -630,6 +658,50 @@ test("snapshot state isolation between projects", async () => {
 
       // Ensure project1 files don't appear in project2
       expect(patch2.files).not.toContain(fwd(tmp1?.path ?? "", "project1.txt"))
+    },
+  })
+})
+
+test("cleanup removes stale gc lock", async () => {
+  await using tmp = await bootstrap()
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      expect(await Snapshot.track()).toBeTruthy()
+
+      const dir = path.join(Global.Path.data, "snapshot", Instance.project.id)
+      const lock = path.join(dir, "gc.pid.lock")
+      const mark = path.join(dir, "gc.pid")
+      const time = new Date(Date.now() - 5 * 60_000)
+
+      await fs.writeFile(mark, `999999 ${os.hostname()}\n`)
+      await fs.writeFile(lock, "")
+      await fs.utimes(lock, time, time)
+
+      await Snapshot.cleanup()
+
+      expect(await has(mark)).toBe(false)
+      expect(await has(lock)).toBe(false)
+    },
+  })
+})
+
+test("cleanup keeps fresh gc lock", async () => {
+  await using tmp = await bootstrap()
+
+  await Instance.provide({
+    directory: tmp.path,
+    fn: async () => {
+      expect(await Snapshot.track()).toBeTruthy()
+
+      const lock = path.join(Global.Path.data, "snapshot", Instance.project.id, "gc.pid.lock")
+
+      await fs.writeFile(lock, "")
+      await Snapshot.cleanup()
+
+      expect(await has(lock)).toBe(true)
+      await fs.rm(lock, { force: true })
     },
   })
 })

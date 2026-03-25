@@ -11,6 +11,7 @@ import { Instance } from "../project/instance"
 import { Flag } from "@/flag/flag"
 import { Process } from "../util/process"
 import { spawn as lspspawn } from "./launch"
+import { Filesystem } from "@/util/filesystem"
 
 export namespace LSP {
   const log = Log.create({ service: "lsp" })
@@ -34,6 +35,29 @@ export namespace LSP {
       ref: "Range",
     })
   export type Range = z.infer<typeof Range>
+
+  export const Issue = z
+    .object({
+      range: Range,
+      severity: z.number().optional(),
+      code: z.union([z.string(), z.number()]).optional(),
+      source: z.string().optional(),
+      message: z.string(),
+    })
+    .meta({
+      ref: "LSPDiagnostic",
+    })
+  export type Issue = z.infer<typeof Issue>
+
+  export const Location = z
+    .object({
+      path: z.string(),
+      range: Range,
+    })
+    .meta({
+      ref: "LSPLocation",
+    })
+  export type Location = z.infer<typeof Location>
 
   export const Symbol = z
     .object({
@@ -137,6 +161,7 @@ export namespace LSP {
         servers,
         clients,
         spawning: new Map<string, Promise<LSPClient.Info | undefined>>(),
+        editor: new Map<string, { content: string; version: number; open: boolean }>(),
       }
     },
     async (state) => {
@@ -177,6 +202,12 @@ export namespace LSP {
 
   async function getClients(file: string) {
     const s = await state()
+
+    // Only spawn LSP clients for files within the instance directory
+    if (!Instance.containsPath(file)) {
+      return []
+    }
+
     const extension = path.parse(file).ext || file
     const result: LSPClient.Info[] = []
 
@@ -288,6 +319,42 @@ export namespace LSP {
     })
   }
 
+  export async function syncEditorFile(input: { path: string; content: string; version: number }) {
+    const file = filepath(input.path)
+    const s = await state()
+    const doc = s?.editor?.get(file)
+    if (doc && doc.version > input.version) return
+    const next = {
+      content: input.content,
+      version: input.version,
+      open: doc?.open ?? false,
+    }
+    s?.editor?.set(file, next)
+    const clients = await getClients(file)
+    await Promise.all(
+      clients.map((client) =>
+        next.open
+          ? client.document.change({ path: file, content: next.content, version: next.version })
+          : client.document.open({ path: file, content: next.content, version: next.version }),
+      ),
+    ).catch((err) => {
+      log.error("failed to sync editor file", { err, file })
+    })
+    next.open = clients.length > 0
+  }
+
+  export async function closeEditorFile(input: string) {
+    const file = filepath(input)
+    const s = await state()
+    const doc = s?.editor?.get(file)
+    s?.editor?.delete(file)
+    if (!doc?.open) return
+    const clients = await getClients(file)
+    await Promise.all(clients.map((client) => client.document.close({ path: file }))).catch((err) => {
+      log.error("failed to close editor file", { err, file })
+    })
+  }
+
   export async function diagnostics() {
     const results: Record<string, LSPClient.Diagnostic[]> = {}
     for (const result of await runAll(async (client) => client.diagnostics)) {
@@ -300,12 +367,22 @@ export namespace LSP {
     return results
   }
 
+  export async function diagnosticsFor(input: string) {
+    const file = filepath(input)
+    return (await diagnostics())[file] ?? []
+  }
+
+  export async function editorDiagnosticsFor(input: string) {
+    return diagnosticsFor(input)
+  }
+
   export async function hover(input: { file: string; line: number; character: number }) {
-    return run(input.file, (client) => {
+    const file = filepath(input.file)
+    return run(file, (client) => {
       return client.connection
         .sendRequest("textDocument/hover", {
           textDocument: {
-            uri: pathToFileURL(input.file).href,
+            uri: pathToFileURL(file).href,
           },
           position: {
             line: input.line,
@@ -384,21 +461,37 @@ export namespace LSP {
   }
 
   export async function definition(input: { file: string; line: number; character: number }) {
-    return run(input.file, (client) =>
+    const file = filepath(input.file)
+    return run(file, (client) =>
       client.connection
         .sendRequest("textDocument/definition", {
-          textDocument: { uri: pathToFileURL(input.file).href },
+          textDocument: { uri: pathToFileURL(file).href },
           position: { line: input.line, character: input.character },
         })
         .catch(() => null),
     ).then((result) => result.flat().filter(Boolean))
   }
 
+  export async function definitionFor(input: { file: string; line: number; character: number }) {
+    return (await definition(input)).flatMap(normalizeLocation)
+  }
+
+  export async function editorDefinitionFor(input: { file: string; line: number; character: number }) {
+    const file = filepath(input.file)
+    const doc = (await state())?.editor?.get(file)
+    if (!doc?.open) await touchFile(file)
+    return definitionFor({
+      ...input,
+      file,
+    })
+  }
+
   export async function references(input: { file: string; line: number; character: number }) {
-    return run(input.file, (client) =>
+    const file = filepath(input.file)
+    return run(file, (client) =>
       client.connection
         .sendRequest("textDocument/references", {
-          textDocument: { uri: pathToFileURL(input.file).href },
+          textDocument: { uri: pathToFileURL(file).href },
           position: { line: input.line, character: input.character },
           context: { includeDeclaration: true },
         })
@@ -407,10 +500,11 @@ export namespace LSP {
   }
 
   export async function implementation(input: { file: string; line: number; character: number }) {
-    return run(input.file, (client) =>
+    const file = filepath(input.file)
+    return run(file, (client) =>
       client.connection
         .sendRequest("textDocument/implementation", {
-          textDocument: { uri: pathToFileURL(input.file).href },
+          textDocument: { uri: pathToFileURL(file).href },
           position: { line: input.line, character: input.character },
         })
         .catch(() => null),
@@ -418,10 +512,11 @@ export namespace LSP {
   }
 
   export async function prepareCallHierarchy(input: { file: string; line: number; character: number }) {
-    return run(input.file, (client) =>
+    const file = filepath(input.file)
+    return run(file, (client) =>
       client.connection
         .sendRequest("textDocument/prepareCallHierarchy", {
-          textDocument: { uri: pathToFileURL(input.file).href },
+          textDocument: { uri: pathToFileURL(file).href },
           position: { line: input.line, character: input.character },
         })
         .catch(() => []),
@@ -429,10 +524,11 @@ export namespace LSP {
   }
 
   export async function incomingCalls(input: { file: string; line: number; character: number }) {
-    return run(input.file, async (client) => {
+    const file = filepath(input.file)
+    return run(file, async (client) => {
       const items = (await client.connection
         .sendRequest("textDocument/prepareCallHierarchy", {
-          textDocument: { uri: pathToFileURL(input.file).href },
+          textDocument: { uri: pathToFileURL(file).href },
           position: { line: input.line, character: input.character },
         })
         .catch(() => [])) as any[]
@@ -442,10 +538,11 @@ export namespace LSP {
   }
 
   export async function outgoingCalls(input: { file: string; line: number; character: number }) {
-    return run(input.file, async (client) => {
+    const file = filepath(input.file)
+    return run(file, async (client) => {
       const items = (await client.connection
         .sendRequest("textDocument/prepareCallHierarchy", {
-          textDocument: { uri: pathToFileURL(input.file).href },
+          textDocument: { uri: pathToFileURL(file).href },
           position: { line: input.line, character: input.character },
         })
         .catch(() => [])) as any[]
@@ -481,5 +578,40 @@ export namespace LSP {
 
       return `${severity} [${line}:${col}] ${diagnostic.message}`
     }
+  }
+
+  function filepath(input: string) {
+    return Filesystem.normalizePath(path.isAbsolute(input) ? input : path.resolve(Instance.directory, input))
+  }
+
+  function normalizeLocation(input: unknown): Location[] {
+    if (!input || typeof input !== "object") return []
+    if ("uri" in input && typeof input.uri === "string" && input.uri.startsWith("file:") && "range" in input) {
+      const range = Range.safeParse(input.range)
+      if (!range.success) return []
+      return [
+        {
+          path: Filesystem.normalizePath(fileURLToPath(input.uri)),
+          range: range.data,
+        },
+      ]
+    }
+    if ("targetUri" in input && typeof input.targetUri === "string" && input.targetUri.startsWith("file:")) {
+      const target =
+        "targetSelectionRange" in input && input.targetSelectionRange
+          ? input.targetSelectionRange
+          : "targetRange" in input
+            ? input.targetRange
+            : undefined
+      const range = Range.safeParse(target)
+      if (!range.success) return []
+      return [
+        {
+          path: Filesystem.normalizePath(fileURLToPath(input.targetUri)),
+          range: range.data,
+        },
+      ]
+    }
+    return []
   }
 }
