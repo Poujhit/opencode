@@ -1,52 +1,114 @@
-import { createSignal, createEffect, onCleanup, onMount, Show } from "solid-js"
+import { createEffect, createSignal, onCleanup, onMount, Show } from "solid-js"
 import { createStore } from "solid-js/store"
-import { showToast } from "@opencode-ai/ui/toast"
 import { Button } from "@opencode-ai/ui/button"
 import type { FileSearchHandle } from "@opencode-ai/ui/file"
-import { useFile } from "@/context/file"
+import { showToast } from "@opencode-ai/ui/toast"
+import { useFile, type LspDiagnostic, type LspLocation, type SelectedLineRange } from "@/context/file"
 import type { ReviewMark } from "@/context/review-state"
-
-import { EditorView, basicSetup } from "codemirror"
+import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete"
+import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
+import {
+  bracketMatching,
+  defaultHighlightStyle,
+  foldGutter,
+  foldKeymap,
+  indentOnInput,
+  syntaxHighlighting,
+} from "@codemirror/language"
 import { Compartment, EditorState, StateField } from "@codemirror/state"
+import { lintGutter, linter, setDiagnostics, type Diagnostic as LintDiagnostic } from "@codemirror/lint"
+import { highlightSelectionMatches, searchKeymap } from "@codemirror/search"
 import { oneDark } from "@codemirror/theme-one-dark"
-import { Decoration, WidgetType } from "@codemirror/view"
-
-import { javascript } from "@codemirror/lang-javascript"
-import { html } from "@codemirror/lang-html"
+import {
+  crosshairCursor,
+  Decoration,
+  drawSelection,
+  dropCursor,
+  EditorView,
+  highlightActiveLine,
+  highlightActiveLineGutter,
+  highlightSpecialChars,
+  keymap,
+  lineNumbers,
+  rectangularSelection,
+  WidgetType,
+} from "@codemirror/view"
+import { cpp } from "@codemirror/lang-cpp"
 import { css } from "@codemirror/lang-css"
+import { go } from "@codemirror/lang-go"
+import { html } from "@codemirror/lang-html"
+import { java } from "@codemirror/lang-java"
+import { javascript } from "@codemirror/lang-javascript"
 import { json } from "@codemirror/lang-json"
 import { markdown } from "@codemirror/lang-markdown"
+import { php } from "@codemirror/lang-php"
 import { python } from "@codemirror/lang-python"
 import { rust } from "@codemirror/lang-rust"
-import { cpp } from "@codemirror/lang-cpp"
-import { java } from "@codemirror/lang-java"
-import { xml } from "@codemirror/lang-xml"
 import { sql } from "@codemirror/lang-sql"
+import { xml } from "@codemirror/lang-xml"
 import { yaml } from "@codemirror/lang-yaml"
-import { php } from "@codemirror/lang-php"
-import { go } from "@codemirror/lang-go"
 
-function getLanguageExtension(filePath: string) {
-  const ext = filePath.split(".").pop()?.toLowerCase()
+function getLanguageExtension(file: string) {
+  const ext = file.split(".").pop()?.toLowerCase()
   switch (ext) {
-    case "js": case "mjs": case "cjs": return javascript()
-    case "ts": case "mts": case "cts": return javascript({ typescript: true })
-    case "jsx": return javascript({ jsx: true })
-    case "tsx": return javascript({ jsx: true, typescript: true })
-    case "html": case "htm": case "svelte": case "vue": return html()
-    case "css": case "scss": case "less": return css()
-    case "json": case "jsonc": return json()
-    case "md": case "mdx": return markdown()
-    case "py": case "pyw": return python()
-    case "rs": return rust()
-    case "c": case "h": case "cpp": case "cxx": case "cc": case "hpp": return cpp()
-    case "java": case "kt": case "kts": return java()
-    case "xml": case "svg": case "xsl": return xml()
-    case "sql": return sql()
-    case "yaml": case "yml": return yaml()
-    case "php": return php()
-    case "go": return go()
-    default: return null
+    case "js":
+    case "mjs":
+    case "cjs":
+      return javascript()
+    case "ts":
+    case "mts":
+    case "cts":
+      return javascript({ typescript: true })
+    case "jsx":
+      return javascript({ jsx: true })
+    case "tsx":
+      return javascript({ jsx: true, typescript: true })
+    case "html":
+    case "htm":
+    case "svelte":
+    case "vue":
+      return html()
+    case "css":
+    case "scss":
+    case "less":
+      return css()
+    case "json":
+    case "jsonc":
+      return json()
+    case "md":
+    case "mdx":
+      return markdown()
+    case "py":
+    case "pyw":
+      return python()
+    case "rs":
+      return rust()
+    case "c":
+    case "h":
+    case "cpp":
+    case "cxx":
+    case "cc":
+    case "hpp":
+      return cpp()
+    case "java":
+    case "kt":
+    case "kts":
+      return java()
+    case "xml":
+    case "svg":
+    case "xsl":
+      return xml()
+    case "sql":
+      return sql()
+    case "yaml":
+    case "yml":
+      return yaml()
+    case "php":
+      return php()
+    case "go":
+      return go()
+    default:
+      return null
   }
 }
 
@@ -54,6 +116,11 @@ export interface EditableFileProps {
   file: string
   content: string
   editedContent?: string
+  diagnostics?: LspDiagnostic[]
+  selectedLines?: SelectedLineRange | null
+  jumpLines?: SelectedLineRange | null
+  scrollTop?: number
+  scrollLeft?: number
   review?: {
     busy?: boolean
     count: number
@@ -68,6 +135,11 @@ export interface EditableFileProps {
   onSelectionChange?: (range: { startLine: number; endLine: number } | null) => void
   onSave?: (content: string) => Promise<void>
   onViewMode?: () => void
+  onDefinition?: (input: { file: string; line: number; character: number }) => Promise<LspLocation[]>
+  onDefinitionPick?: (items: LspLocation[]) => Promise<LspLocation | undefined>
+  onDefinitionNavigate?: (item: LspLocation) => Promise<void> | void
+  onJumpApplied?: VoidFunction
+  onScroll?: (input: { top: number; left: number }) => void
   search?: {
     register: (handle: FileSearchHandle | null) => void
   }
@@ -85,6 +157,85 @@ function range(doc: EditorState["doc"], start: number, end: number) {
   if (end >= doc.lines) return { from, to: doc.length }
   return { from, to: doc.line(end + 1).from }
 }
+
+function at(doc: EditorState["doc"], line: number, character: number) {
+  if (doc.lines === 0) return 0
+  const row = doc.line(Math.min(Math.max(1, line + 1), doc.lines))
+  return Math.min(row.to, row.from + Math.max(0, character))
+}
+
+function lint(input: EditorState["doc"], item: LspDiagnostic): LintDiagnostic {
+  const from = at(input, item.range.start.line, item.range.start.character)
+  const raw = at(input, item.range.end.line, item.range.end.character)
+  const to = raw > from ? raw : Math.min(input.length, from + 1)
+  return {
+    from,
+    to,
+    severity: severity(item.severity),
+    source: item.source,
+    message: item.message,
+  }
+}
+
+function severity(input?: number): LintDiagnostic["severity"] {
+  if (input === 1) return "error"
+  if (input === 2) return "warning"
+  if (input === 3) return "info"
+  return "hint"
+}
+
+function lineRange(doc: EditorState["doc"], input: SelectedLineRange) {
+  const start = Math.min(input.start, input.end)
+  const end = Math.max(input.start, input.end)
+  return range(doc, start, end)
+}
+
+function word(view: EditorView, pos: number) {
+  const item = view.state.wordAt(pos)
+  if (item) return item
+  return undefined
+}
+
+function jump(input: MouseEvent | KeyboardEvent) {
+  const mac = typeof navigator !== "undefined" && /Mac|iPhone|iPad|iPod/.test(navigator.platform)
+  if (input.altKey || input.shiftKey) return false
+  return mac ? input.metaKey : input.ctrlKey
+}
+
+function linkExt(input?: { from: number; to: number }) {
+  if (!input || input.from === input.to) return EditorView.decorations.of(Decoration.none)
+  return EditorView.decorations.of(
+    Decoration.set([Decoration.mark({ class: "cm-definition-link" }).range(input.from, input.to)], true),
+  )
+}
+
+const setup = [
+  lineNumbers(),
+  highlightActiveLineGutter(),
+  highlightSpecialChars(),
+  history(),
+  foldGutter(),
+  drawSelection(),
+  dropCursor(),
+  EditorState.allowMultipleSelections.of(true),
+  indentOnInput(),
+  syntaxHighlighting(defaultHighlightStyle, { fallback: true }),
+  bracketMatching(),
+  closeBrackets(),
+  autocompletion(),
+  rectangularSelection(),
+  crosshairCursor(),
+  highlightActiveLine(),
+  highlightSelectionMatches(),
+  keymap.of([
+    ...closeBracketsKeymap,
+    ...defaultKeymap,
+    ...searchKeymap,
+    ...historyKeymap,
+    ...foldKeymap,
+    ...completionKeymap,
+  ]),
+]
 
 class HunkWidget extends WidgetType {
   constructor(
@@ -300,38 +451,117 @@ export function EditableFile(props: EditableFileProps) {
     idx: 0,
     count: 0,
   })
-  let editorContainer: HTMLDivElement | undefined
-  let editorView: EditorView | undefined
+  let root: HTMLDivElement | undefined
+  let view: EditorView | undefined
   let findInput: HTMLInputElement | undefined
+  let hover: number | undefined
+  let smooth: ReturnType<typeof setTimeout> | undefined
+  let point: { x: number; y: number } | undefined
+  let seq = 0
   const markSlot = new Compartment()
   const readSlot = new Compartment()
   const editSlot = new Compartment()
   const findSlot = new Compartment()
+  const lintSlot = new Compartment()
+  const linkSlot = new Compartment()
 
   const reviewing = () => !!props.review
-  const currentContent = () => props.review ? props.review.text : props.editedContent ?? props.content
+  const currentContent = () => (props.review ? props.review.text : (props.editedContent ?? props.content))
   const hasChanges = () => !reviewing() && currentContent() !== props.content
 
+  const setLink = (input?: { from: number; to: number }) => {
+    if (!view) return
+    view.dom.style.cursor = input ? "pointer" : ""
+    view.dispatch({
+      effects: linkSlot.reconfigure(linkExt(input)),
+    })
+  }
+
+  const clearLink = () => {
+    if (hover !== undefined) {
+      clearTimeout(hover)
+      hover = undefined
+    }
+    point = undefined
+    setLink()
+  }
+
+  const resolve = (pos: number) => {
+    if (!view || !props.onDefinition) return Promise.resolve([] as LspLocation[])
+    const line = view.state.doc.lineAt(pos)
+    return props.onDefinition({
+      file: props.file,
+      line: line.number - 1,
+      character: pos - line.from,
+    })
+  }
+
+  const inspect = (x: number, y: number) => {
+    if (!view || reviewing() || !props.onDefinition) return
+    const pos = view.posAtCoords({ x, y })
+    if (pos === null) {
+      setLink()
+      return
+    }
+    const item = word(view, pos)
+    if (!item) {
+      setLink()
+      return
+    }
+    const id = ++seq
+    void resolve(pos).then((items) => {
+      if (id !== seq) return
+      if (items.length === 0) {
+        setLink()
+        return
+      }
+      setLink(item)
+    })
+  }
+
+  const schedule = (x: number, y: number) => {
+    if (hover !== undefined) clearTimeout(hover)
+    hover = window.setTimeout(() => {
+      hover = undefined
+      inspect(x, y)
+    }, 120)
+  }
+
   const syncFind = (input?: { reset?: boolean; scroll?: boolean }) => {
-    if (!editorView) return
+    if (!view) return
 
     const query = find.query.trim()
-    const items = query ? hits(editorView.state.doc.toString(), query) : []
+    const items = query ? hits(view.state.doc.toString(), query) : []
     const idx = items.length === 0 ? 0 : Math.min(input?.reset ? 0 : find.idx, items.length - 1)
 
     if (find.count !== items.length) setFind("count", items.length)
     if (find.idx !== idx) setFind("idx", idx)
 
-    editorView.dispatch({
+    view.dispatch({
       effects: findSlot.reconfigure(findExt(items, idx)),
     })
 
     const item = input?.scroll ? items[idx] : undefined
     if (!item) return
-    editorView.dispatch({
+    view.dispatch({
       selection: { anchor: item.from, head: item.to },
       scrollIntoView: true,
     })
+  }
+
+  const syncLint = () => {
+    if (!view) return
+    const editor = view
+    const items = reviewing() ? [] : (props.diagnostics ?? []).map((item) => lint(editor.state.doc, item))
+    editor.dispatch(setDiagnostics(editor.state, items))
+  }
+
+  const restoreScroll = () => {
+    if (!view) return
+    const top = props.scrollTop ?? 0
+    const left = props.scrollLeft ?? 0
+    if (Math.abs(view.scrollDOM.scrollTop - top) > 1) view.scrollDOM.scrollTop = top
+    if (Math.abs(view.scrollDOM.scrollLeft - left) > 1) view.scrollDOM.scrollLeft = left
   }
 
   const openFind = (query?: string) => {
@@ -352,32 +582,32 @@ export function EditableFile(props: EditableFileProps) {
       idx: 0,
       count: 0,
     })
-    if (!editorView) return
-    editorView.dispatch({
+    if (!view) return
+    view.dispatch({
       effects: findSlot.reconfigure(findExt([], 0)),
     })
   }
 
   const step = (dir: 1 | -1) => {
-    if (!find.open || !editorView || find.count === 0) return
+    if (!find.open || !view || find.count === 0) return
     setFind("idx", (find.idx + dir + find.count) % find.count)
     requestAnimationFrame(() => syncFind({ scroll: true }))
   }
 
   const swap = (all: boolean) => {
-    if (reviewing() || !editorView) return
+    if (reviewing() || !view) return
 
     const query = find.query.trim()
     if (!query) return
 
     const next = find.replace
-    const text = editorView.state.doc.toString()
+    const text = view.state.doc.toString()
     const items = hits(text, query)
     if (items.length === 0) return
 
     if (all) {
       const re = new RegExp(query.replace(/[.*+?^${}()|[\]\\]/g, "\\$&"), "gi")
-      editorView.dispatch({
+      view.dispatch({
         changes: { from: 0, to: text.length, insert: text.replace(re, next) },
       })
       setFind("idx", 0)
@@ -387,7 +617,7 @@ export function EditableFile(props: EditableFileProps) {
 
     const item = items[Math.min(find.idx, items.length - 1)]
     if (!item) return
-    editorView.dispatch({
+    view.dispatch({
       changes: { from: item.from, to: item.to, insert: next },
     })
     requestAnimationFrame(() => syncFind({ scroll: true }))
@@ -397,17 +627,14 @@ export function EditableFile(props: EditableFileProps) {
     if (reviewing() || !hasChanges() || saving()) return
     setSaving(true)
     try {
-      if (props.onSave) {
-        await props.onSave(currentContent())
-      } else {
-        await file.save(props.file, currentContent())
-      }
+      if (props.onSave) await props.onSave(currentContent())
+      else await file.save(props.file, currentContent())
       showToast({ variant: "success", title: "File saved", description: props.file })
-    } catch (e) {
+    } catch (error) {
       showToast({
         variant: "error",
         title: "Failed to save",
-        description: e instanceof Error ? e.message : "Unknown error",
+        description: error instanceof Error ? error.message : "Unknown error",
       })
     } finally {
       setSaving(false)
@@ -417,39 +644,80 @@ export function EditableFile(props: EditableFileProps) {
   const handleDiscard = () => {
     if (reviewing()) return
     props.onContentChange?.(props.content)
-    if (editorView) {
-      const doc = editorView.state.doc.toString()
-      if (doc !== props.content) {
-        editorView.dispatch({
-          changes: { from: 0, to: doc.length, insert: props.content },
-        })
-      }
-    }
+    if (!view) return
+    const doc = view.state.doc.toString()
+    if (doc === props.content) return
+    view.dispatch({
+      changes: { from: 0, to: doc.length, insert: props.content },
+    })
   }
 
-  // Cmd+S shortcut (captures before CodeMirror)
   createEffect(() => {
     if (typeof window === "undefined") return
-    const onKeyDown = (event: KeyboardEvent) => {
+    const down = (event: KeyboardEvent) => {
       if (!(event.metaKey || event.ctrlKey) || event.key.toLowerCase() !== "s") return
       event.preventDefault()
       event.stopPropagation()
-      handleSave()
+      void handleSave()
     }
-    window.addEventListener("keydown", onKeyDown, { capture: true })
-    onCleanup(() => window.removeEventListener("keydown", onKeyDown, { capture: true }))
+    const move = (event: KeyboardEvent) => {
+      if (!jump(event) || !point) return
+      schedule(point.x, point.y)
+    }
+    const up = (event: KeyboardEvent) => {
+      if (jump(event)) return
+      clearLink()
+    }
+    window.addEventListener("keydown", down, { capture: true })
+    window.addEventListener("keydown", move, { capture: true })
+    window.addEventListener("keyup", up, { capture: true })
+    onCleanup(() => window.removeEventListener("keydown", down, { capture: true }))
+    onCleanup(() => window.removeEventListener("keydown", move, { capture: true }))
+    onCleanup(() => window.removeEventListener("keyup", up, { capture: true }))
   })
 
   onMount(() => {
-    if (!editorContainer) return
+    if (!root) return
 
-    const extensions = [
-      basicSetup,
+    const ext = [
+      setup,
       oneDark,
       markSlot.of(reviewExt(props.review)),
       readSlot.of(EditorState.readOnly.of(reviewing())),
       editSlot.of(EditorView.editable.of(!reviewing())),
       findSlot.of(findExt([], 0)),
+      lintSlot.of([linter(null), lintGutter()]),
+      linkSlot.of(linkExt()),
+      EditorView.domEventHandlers({
+        mousemove: (event, input) => {
+          point = { x: event.clientX, y: event.clientY }
+          if (!jump(event) || reviewing() || !props.onDefinition) {
+            setLink()
+            return false
+          }
+          schedule(event.clientX, event.clientY)
+          return false
+        },
+        mouseleave: () => {
+          clearLink()
+          return false
+        },
+        mousedown: (event, input) => {
+          if (!jump(event) || reviewing() || !props.onDefinition) return false
+          const pos = input.posAtCoords({ x: event.clientX, y: event.clientY })
+          if (pos === null) return false
+          event.preventDefault()
+          event.stopPropagation()
+          void resolve(pos).then(async (items) => {
+            if (items.length === 0) return
+            const item =
+              items.length === 1 ? items[0] : props.onDefinitionPick ? await props.onDefinitionPick(items) : items[0]
+            if (!item) return
+            await props.onDefinitionNavigate?.(item)
+          })
+          return true
+        },
+      }),
       EditorView.updateListener.of((update) => {
         if (update.docChanged && !props.review) {
           props.onContentChange?.(update.state.doc.toString())
@@ -458,11 +726,11 @@ export function EditableFile(props: EditableFileProps) {
           const sel = update.state.selection.main
           if (sel.empty) {
             props.onSelectionChange?.(null)
-          } else {
-            const startLine = update.state.doc.lineAt(sel.from).number
-            const endLine = update.state.doc.lineAt(sel.to).number
-            props.onSelectionChange?.({ startLine, endLine })
+            return
           }
+          const startLine = update.state.doc.lineAt(sel.from).number
+          const endLine = update.state.doc.lineAt(sel.to).number
+          props.onSelectionChange?.({ startLine, endLine })
         }
       }),
       EditorView.theme({
@@ -483,36 +751,63 @@ export function EditableFile(props: EditableFileProps) {
           backgroundColor: "color-mix(in oklab, var(--color-warning-500, #f59e0b) 52%, transparent)",
           boxShadow: "inset 0 0 0 1px color-mix(in oklab, white 18%, transparent)",
         },
+        ".cm-diagnostic": {
+          borderBottomWidth: "2px",
+        },
+        ".cm-diagnosticInfo, .cm-diagnosticHint": {
+          opacity: "0.8",
+        },
+        ".cm-lintRange-error": {
+          backgroundColor: "color-mix(in oklab, var(--color-danger-500, #ef4444) 14%, transparent)",
+        },
+        ".cm-lintRange-warning": {
+          backgroundColor: "color-mix(in oklab, var(--color-warning-500, #f59e0b) 14%, transparent)",
+        },
+        ".cm-definition-link": {
+          textDecoration: "underline",
+          textDecorationThickness: "2px",
+          textUnderlineOffset: "3px",
+        },
       }),
     ]
 
-    const langExt = getLanguageExtension(props.file)
-    if (langExt) extensions.push(langExt)
+    const lang = getLanguageExtension(props.file)
+    if (lang) ext.push(lang)
 
-    editorView = new EditorView({
-      state: EditorState.create({ doc: currentContent(), extensions }),
-      parent: editorContainer,
+    view = new EditorView({
+      state: EditorState.create({ doc: currentContent(), extensions: ext }),
+      parent: root,
     })
+    const onScroll = () => {
+      if (!view) return
+      props.onScroll?.({
+        top: view.scrollDOM.scrollTop,
+        left: view.scrollDOM.scrollLeft,
+      })
+    }
+    view.scrollDOM.addEventListener("scroll", onScroll)
+    onCleanup(() => view?.scrollDOM.removeEventListener("scroll", onScroll))
+    syncLint()
   })
 
   createEffect(() => {
-    if (!editorView) return
-    editorView.dispatch({
+    if (!view) return
+    view.dispatch({
       effects: [
         markSlot.reconfigure(reviewExt(props.review)),
         readSlot.reconfigure(EditorState.readOnly.of(reviewing())),
         editSlot.reconfigure(EditorView.editable.of(!reviewing())),
       ],
     })
+    syncLint()
   })
 
-  // Sync external content changes into CodeMirror
   createEffect(() => {
     find.open
     find.query
     find.idx
     currentContent()
-    if (!editorView) return
+    if (!view) return
     syncFind()
   })
 
@@ -528,16 +823,68 @@ export function EditableFile(props: EditableFileProps) {
 
   createEffect(() => {
     const content = currentContent()
-    if (!editorView) return
-    const doc = editorView.state.doc.toString()
+    if (!view) return
+    const doc = view.state.doc.toString()
     if (doc !== content) {
-      editorView.dispatch({
+      view.dispatch({
         changes: { from: 0, to: doc.length, insert: content },
       })
     }
   })
 
-  onCleanup(() => editorView?.destroy())
+  createEffect(() => {
+    props.diagnostics
+    if (!view) return
+    syncLint()
+  })
+
+  createEffect(() => {
+    props.scrollTop
+    props.scrollLeft
+    if (!view) return
+    if (props.selectedLines || props.jumpLines) return
+    requestAnimationFrame(restoreScroll)
+  })
+
+  createEffect(() => {
+    const item = props.selectedLines
+    if (!view || !item) return
+    const next = lineRange(view.state.doc, item)
+    const cur = view.state.selection.main
+    if (cur.from === next.from && cur.to === next.to) return
+    view.dispatch({
+      selection: { anchor: next.from, head: next.to },
+      scrollIntoView: true,
+    })
+    view.focus()
+  })
+
+  createEffect(() => {
+    const item = props.jumpLines
+    if (!view || !item) return
+    const next = lineRange(view.state.doc, item)
+    const dom = view.scrollDOM
+    if (smooth) clearTimeout(smooth)
+    dom.style.scrollBehavior = "smooth"
+    view.dispatch({
+      effects: EditorView.scrollIntoView(next.from, {
+        y: "center",
+      }),
+    })
+    smooth = setTimeout(() => {
+      if (view?.scrollDOM !== dom) return
+      dom.style.scrollBehavior = ""
+      smooth = undefined
+    }, 220)
+    view.focus()
+    props.onJumpApplied?.()
+  })
+
+  onCleanup(() => {
+    clearLink()
+    if (smooth) clearTimeout(smooth)
+    view?.destroy()
+  })
 
   return (
     <div class="editable-file">
@@ -578,9 +925,11 @@ export function EditableFile(props: EditableFileProps) {
             </Button>
           </Show>
           <Show when={!reviewing() && hasChanges()}>
-            <Button variant="primary" size="small" onClick={handleSave} disabled={saving()}>
+            <Button variant="primary" size="small" onClick={() => void handleSave()} disabled={saving()}>
               {saving() ? "Saving..." : "Save"}
-              <kbd class="ml-1 opacity-70 text-[10px] uppercase font-mono border border-current/20 rounded px-1">⌘S</kbd>
+              <kbd class="ml-1 rounded border border-current/20 px-1 font-mono text-[10px] uppercase opacity-70">
+                ⌘S
+              </kbd>
             </Button>
           </Show>
           <Show when={!reviewing()}>
@@ -589,12 +938,7 @@ export function EditableFile(props: EditableFileProps) {
             </Button>
           </Show>
           <Show when={!reviewing()}>
-            <Button
-              variant="secondary"
-              size="small"
-              onClick={() => props.onViewMode?.()}
-              title="Switch to view mode"
-            >
+            <Button variant="secondary" size="small" onClick={() => props.onViewMode?.()} title="Switch to view mode">
               View
             </Button>
           </Show>
@@ -683,7 +1027,7 @@ export function EditableFile(props: EditableFileProps) {
         </div>
       </Show>
 
-      <div class="editable-file-editor" ref={editorContainer} />
+      <div class="editable-file-editor" ref={root} />
     </div>
   )
 }

@@ -12,19 +12,44 @@ import { Tabs } from "@opencode-ai/ui/tabs"
 import { ScrollView } from "@opencode-ai/ui/scroll-view"
 import { showToast } from "@opencode-ai/ui/toast"
 import { Button } from "@opencode-ai/ui/button"
+import { useDialog } from "@opencode-ai/ui/context/dialog"
 import { useLayout } from "@/context/layout"
-import { selectionFromLines, useFile, type FileSelection, type SelectedLineRange } from "@/context/file"
+import {
+  selectionFromLines,
+  useFile,
+  type FileSelection,
+  type LspLocation,
+  type SelectedLineRange,
+} from "@/context/file"
 import { useComments } from "@/context/comments"
 import { useLanguage } from "@/context/language"
 import { usePrompt } from "@/context/prompt"
 import { useReview } from "@/context/review"
-import { getSessionHandoff } from "@/pages/session/handoff"
+import { getSessionHandoff, setSessionHandoff } from "@/pages/session/handoff"
+import { DialogDefinition } from "@/components/dialog-definition"
 import { EditableFile } from "@/components/editable-file"
 import { cloneReview, pending, reviewSig } from "@/context/review-state"
 import { useSessionLayout } from "@/pages/session/session-layout"
 import { useParams } from "@solidjs/router"
 import { FILE_FIND_EVENT, reviewDrift } from "./helpers"
 import { createSessionTabs } from "@/pages/session/helpers"
+
+const jumps = new Map<string, SelectedLineRange>()
+
+function queueJump(path: string, range: SelectedLineRange) {
+  jumps.set(path, cloneSelectedLineRange(range))
+}
+
+function takeJump(path: string) {
+  const item = jumps.get(path)
+  if (!item) return null
+  jumps.delete(path)
+  return cloneSelectedLineRange(item)
+}
+
+function clearJump(path: string) {
+  jumps.delete(path)
+}
 
 function FileCommentMenu(props: {
   moreLabel: string
@@ -65,6 +90,7 @@ export function FileTabContent(props: {
   setEditedContents: (fn: (prev: Record<string, string>) => Record<string, string>) => void
 }) {
   const params = useParams()
+  const dialog = useDialog()
   const layout = useLayout()
   const file = useFile()
   const comments = useComments()
@@ -80,7 +106,15 @@ export function FileTabContent(props: {
   }).activeFileTab
 
   // Clear all edited contents when project directory changes
-  createEffect(on(() => params.dir, () => { props.setEditedContents(() => ({})) }, { defer: true }))
+  createEffect(
+    on(
+      () => params.dir,
+      () => {
+        props.setEditedContents(() => ({}))
+      },
+      { defer: true },
+    ),
+  )
 
   let scroll: HTMLDivElement | undefined
   let scrollFrame: number | undefined
@@ -115,6 +149,22 @@ export function FileTabContent(props: {
     if (!p) return null
     if (file.ready()) return (file.selectedLines(p) as SelectedLineRange | undefined) ?? null
     return (getSessionHandoff(sessionKey())?.files[p] as SelectedLineRange | undefined) ?? null
+  })
+  const [jumpLines, setJumpLines] = createSignal<SelectedLineRange | null>(null)
+  const diagnostics = createMemo(() => {
+    const p = path()
+    if (!p) return []
+    return file.diagnostics(p) ?? []
+  })
+  const scrollTop = createMemo(() => {
+    const p = path()
+    if (!p) return 0
+    return file.scrollTop(p) ?? 0
+  })
+  const scrollLeft = createMemo(() => {
+    const p = path()
+    if (!p) return 0
+    return file.scrollLeft(p) ?? 0
   })
 
   const selectionPreview = (source: string, selection: FileSelection) => {
@@ -280,13 +330,10 @@ export function FileTabContent(props: {
   })
 
   createEffect(
-    on(
-      path,
-      () => {
-        commentsUi.note.reset()
-      },
-      { defer: true },
-    ),
+    on(path, (p) => {
+      commentsUi.note.reset()
+      setJumpLines(p ? takeJump(p) : null)
+    }),
   )
 
   createEffect(() => {
@@ -490,6 +537,7 @@ export function FileTabContent(props: {
     const p = path()
     if (!p) return
     props.setEditedContents((prev) => ({ ...prev, [p]: content }))
+    void file.syncEditor(p, content)
   }
 
   const clearEditedContent = () => {
@@ -525,6 +573,17 @@ export function FileTabContent(props: {
   const showStrip = createMemo(() => fileIndex() !== -1)
   const [busy, setBusy] = createSignal(false)
 
+  const clearSelected = (path: string) => {
+    file.setSelectedLines(path, null)
+    const prev = getSessionHandoff(sessionKey())?.files ?? {}
+    setSessionHandoff(sessionKey(), {
+      files: {
+        ...prev,
+        [path]: null,
+      },
+    })
+  }
+
   const openReviewFile = (target: string) => {
     const tab = file.tab(target)
     tabs().open(tab)
@@ -532,6 +591,43 @@ export function FileTabContent(props: {
     void file.load(target)
     setEditMode(true)
   }
+
+  const openDefinition = async (item: LspLocation) => {
+    const target = file.normalize(item.path)
+    if (!target) return
+    const line = item.range.start.line + 1
+    clearSelected(target)
+    queueJump(target, { start: line, end: line })
+    const tab = file.tab(target)
+    tabs().open(tab)
+    tabs().setActive(tab)
+    if (target === path()) {
+      setJumpLines(takeJump(target))
+      setEditMode(true)
+      return
+    }
+    await file.load(target)
+  }
+
+  const pickDefinition = (items: LspLocation[]) =>
+    new Promise<LspLocation | undefined>((resolve) => {
+      let done = false
+      dialog.show(
+        () => (
+          <DialogDefinition
+            items={items}
+            onSelect={(item) => {
+              done = true
+              resolve(item)
+            }}
+          />
+        ),
+        () => {
+          if (done) return
+          resolve(undefined)
+        },
+      )
+    })
 
   const step = (idx: number) => {
     const list = files()
@@ -668,6 +764,26 @@ export function FileTabContent(props: {
     })
   })
 
+  createEffect(
+    on(
+      [path, () => state()?.loaded, editMode],
+      ([p, loaded, editing]) => {
+        if (!p || !loaded || !editing) return
+        void file.syncEditor(p, getEditedContent() ?? contents(), 0)
+        void file.refreshEditorDiagnostics(p)
+      },
+      { defer: true },
+    ),
+  )
+
+  createEffect(() => {
+    const p = path()
+    if (!p || !editMode()) return
+    onCleanup(() => {
+      void file.closeEditor(p)
+    })
+  })
+
   // Cmd+I: add highlighted lines to prompt context
   const addSelectionToPrompt = () => {
     const p = path()
@@ -677,10 +793,10 @@ export function FileTabContent(props: {
     const sel = editMode()
       ? editSelection()
       : (() => {
-        const a = activeSelection()
-        if (!a) return null
-        return { startLine: a.start, endLine: a.end }
-      })()
+          const a = activeSelection()
+          if (!a) return null
+          return { startLine: a.start, endLine: a.end }
+        })()
 
     if (!sel) {
       showToast({ variant: "error", title: "No lines selected", description: "Select some lines first" })
@@ -759,23 +875,40 @@ export function FileTabContent(props: {
               file={path() ?? ""}
               content={contents()}
               editedContent={getEditedContent() ?? contents()}
+              diagnostics={diagnostics()}
+              selectedLines={selectedLines()}
+              jumpLines={jumpLines()}
+              scrollTop={scrollTop()}
+              scrollLeft={scrollLeft()}
+              onJumpApplied={() => {
+                const p = path()
+                if (!p) return
+                clearJump(p)
+                setJumpLines(null)
+              }}
+              onScroll={(input) => {
+                const p = path()
+                if (!p) return
+                file.setScrollTop(p, input.top)
+                file.setScrollLeft(p, input.left)
+              }}
               search={search}
               review={
                 reviewView()
                   ? {
-                    busy: busy(),
-                    count: reviewView()!.hunks.length,
-                    text: reviewView()!.text,
-                    hunks: reviewView()!.hunks,
-                    onApprove: approve,
-                    onReject: (idx) => {
-                      void reject(idx)
-                    },
-                    onApproveAll: approveAll,
-                    onRejectAll: () => {
-                      void rejectAll()
-                    },
-                  }
+                      busy: busy(),
+                      count: reviewView()!.hunks.length,
+                      text: reviewView()!.text,
+                      hunks: reviewView()!.hunks,
+                      onApprove: approve,
+                      onReject: (idx) => {
+                        void reject(idx)
+                      },
+                      onApproveAll: approveAll,
+                      onRejectAll: () => {
+                        void rejectAll()
+                      },
+                    }
                   : undefined
               }
               onContentChange={setEditedContent}
@@ -784,6 +917,9 @@ export function FileTabContent(props: {
                 await file.save(path()!, content)
                 clearEditedContent()
               }}
+              onDefinition={(input) => file.editorDefinition(input)}
+              onDefinitionPick={pickDefinition}
+              onDefinitionNavigate={openDefinition}
               onViewMode={() => setEditMode(false)}
             />
           </div>
@@ -802,11 +938,7 @@ export function FileTabContent(props: {
                 <span class="editable-file-mode-label">View Mode</span>
               </div>
               <div class="editable-file-toolbar-right">
-                <Button
-                  variant="secondary"
-                  size="small"
-                  onClick={() => setEditMode(true)}
-                >
+                <Button variant="secondary" size="small" onClick={() => setEditMode(true)}>
                   Edit
                 </Button>
               </div>
@@ -822,25 +954,3 @@ export function FileTabContent(props: {
     </Tabs.Content>
   )
 }
-
-
-// new change
-{/* 
-    <Tabs.Content value={props.tab} class="mt-3 relative flex h-full min-h-0 flex-col overflow-hidden contain-strict">
-      <ScrollView
-        class="h-full"
-        viewportRef={(el: HTMLDivElement) => {
-          scroll = el
-          restoreScroll()
-        }}
-        onScroll={handleScroll as any}
-      >
-        <Switch>
-          <Match when={state()?.loaded}>{renderFile(contents())}</Match>
-          <Match when={state()?.loading}>
-            <div class="px-6 py-4 text-text-weak">{language.t("common.loading")}...</div>
-          </Match>
-          <Match when={state()?.error}>{(err) => <div class="px-6 py-4 text-text-weak">{err()}</div>}</Match>
-        </Switch>
-      </ScrollView>
-    </Tabs.Content> */}
