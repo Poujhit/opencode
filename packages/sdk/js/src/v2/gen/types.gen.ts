@@ -2024,6 +2024,19 @@ export type LspStatus = {
   status: "connected" | "error"
 }
 
+export type LspDiagnostic = {
+  range: Range
+  severity?: number
+  code?: string | number
+  source?: string
+  message: string
+}
+
+export type LspLocation = {
+  path: string
+  range: Range
+}
+
 export type FormatterStatus = {
   name: string
   extensions: Array<string>
@@ -5253,6 +5266,128 @@ export type LspStatusResponses = {
 }
 
 export type LspStatusResponse = LspStatusResponses[keyof LspStatusResponses]
+
+export type LspEditorDiagnosticsData = {
+  body?: never
+  path?: never
+  query: {
+    directory?: string
+    workspace?: string
+    path: string
+  }
+  url: "/lsp/editor/diagnostics"
+}
+
+export type LspEditorDiagnosticsErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type LspEditorDiagnosticsError = LspEditorDiagnosticsErrors[keyof LspEditorDiagnosticsErrors]
+
+export type LspEditorDiagnosticsResponses = {
+  /**
+   * Editor LSP diagnostics
+   */
+  200: Array<LspDiagnostic>
+}
+
+export type LspEditorDiagnosticsResponse = LspEditorDiagnosticsResponses[keyof LspEditorDiagnosticsResponses]
+
+export type LspEditorDefinitionData = {
+  body?: never
+  path?: never
+  query: {
+    directory?: string
+    workspace?: string
+    file: string
+    line: number
+    character: number
+  }
+  url: "/lsp/editor/definition"
+}
+
+export type LspEditorDefinitionErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type LspEditorDefinitionError = LspEditorDefinitionErrors[keyof LspEditorDefinitionErrors]
+
+export type LspEditorDefinitionResponses = {
+  /**
+   * Editor LSP definitions
+   */
+  200: Array<LspLocation>
+}
+
+export type LspEditorDefinitionResponse = LspEditorDefinitionResponses[keyof LspEditorDefinitionResponses]
+
+export type LspEditorSyncData = {
+  body?: {
+    path: string
+    content: string
+    version: number
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/lsp/editor/sync"
+}
+
+export type LspEditorSyncErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type LspEditorSyncError = LspEditorSyncErrors[keyof LspEditorSyncErrors]
+
+export type LspEditorSyncResponses = {
+  /**
+   * Editor document synced
+   */
+  200: boolean
+}
+
+export type LspEditorSyncResponse = LspEditorSyncResponses[keyof LspEditorSyncResponses]
+
+export type LspEditorCloseData = {
+  body?: {
+    path: string
+  }
+  path?: never
+  query?: {
+    directory?: string
+    workspace?: string
+  }
+  url: "/lsp/editor/close"
+}
+
+export type LspEditorCloseErrors = {
+  /**
+   * Bad request
+   */
+  400: BadRequestError
+}
+
+export type LspEditorCloseError = LspEditorCloseErrors[keyof LspEditorCloseErrors]
+
+export type LspEditorCloseResponses = {
+  /**
+   * Editor document closed
+   */
+  200: boolean
+}
+
+export type LspEditorCloseResponse = LspEditorCloseResponses[keyof LspEditorCloseResponses]
 
 export type FormatterStatusData = {
   body?: never
