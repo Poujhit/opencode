@@ -322,7 +322,7 @@ export const { use: useFile, provider: FileProvider } = createSimpleContext({
       return state
     }
 
-    function withPath(input: string, action: (file: string) => unknown) {
+    function withPath<T>(input: string, action: (file: string) => T) {
       return action(path.normalize(input))
     }
     const scrollTop = (input: string) => withPath(input, (file) => view().scrollTop(file))
