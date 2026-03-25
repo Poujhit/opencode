@@ -20,6 +20,28 @@ export type FileViewState = {
   selectedLines?: SelectedLineRange | null
 }
 
+export type LspDiagnostic = {
+  range: {
+    start: {
+      line: number
+      character: number
+    }
+    end: {
+      line: number
+      character: number
+    }
+  }
+  severity?: number
+  code?: string | number
+  source?: string
+  message: string
+}
+
+export type LspLocation = {
+  path: string
+  range: LspDiagnostic["range"]
+}
+
 export type FileState = {
   path: string
   name: string
@@ -27,6 +49,7 @@ export type FileState = {
   loading?: boolean
   error?: string
   content?: FileContent
+  diagnostics?: LspDiagnostic[]
 }
 
 export function selectionFromLines(range: SelectedLineRange): FileSelection {
