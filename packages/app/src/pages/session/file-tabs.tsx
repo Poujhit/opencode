@@ -18,6 +18,7 @@ import {
   selectionFromLines,
   useFile,
   type FileSelection,
+  type LspDiagnostic,
   type LspLocation,
   type SelectedLineRange,
 } from "@/context/file"
@@ -30,7 +31,10 @@ import { DialogDefinition } from "@/components/dialog-definition"
 import { EditableFile } from "@/components/editable-file"
 import { cloneReview, pending, reviewSig } from "@/context/review-state"
 import { useSessionLayout } from "@/pages/session/session-layout"
+import { focusPrompt } from "@/components/prompt-input/focus"
+import { writeClipboardText } from "@/utils/clipboard"
 import { useParams } from "@solidjs/router"
+import { format, where, write } from "./lint"
 import { FILE_FIND_EVENT, reviewDrift } from "./helpers"
 import { createSessionTabs } from "@/pages/session/helpers"
 
@@ -772,6 +776,55 @@ export function FileTabContent(props: {
     })
   })
 
+  const copy = (input: { item: LspDiagnostic; lines: SelectedLineRange }) => {
+    const p = path()
+    if (!p) return
+    const text = format({ file: p, item: input.item, lines: input.lines })
+    const detail = where({ file: p, lines: input.lines })
+    void writeClipboardText(text).then((ok) => {
+      if (!ok) {
+        showToast({
+          variant: "error",
+          title: language.t("lint.toast.copy.failed.title"),
+        })
+        return
+      }
+
+      showToast({
+        variant: "success",
+        title: language.t("lint.toast.copy.success.title"),
+        description: language.t("lint.toast.copy.success.description", {
+          where: detail,
+        }),
+      })
+    })
+  }
+
+  const chat = (input: { item: LspDiagnostic; lines: SelectedLineRange }) => {
+    const p = path()
+    if (!p) return
+    const selection = selectionFromLines(input.lines)
+    const source = getEditedContent() ?? contents()
+    const text = format({ file: p, item: input.item, lines: input.lines })
+    const at = write({
+      prompt,
+      file: p,
+      text,
+      lines: input.lines,
+      preview: selectionPreview(source, selection),
+    })
+
+    void focusPrompt(at).then(() => {
+      showToast({
+        variant: "success",
+        title: language.t("lint.toast.chat.success.title"),
+        description: language.t("lint.toast.chat.success.description", {
+          where: where({ file: p, lines: input.lines }),
+        }),
+      })
+    })
+  }
+
   // Cmd+I: add highlighted lines to prompt context
   const addSelectionToPrompt = () => {
     const p = path()
@@ -864,6 +917,14 @@ export function FileTabContent(props: {
               content={contents()}
               editedContent={getEditedContent() ?? contents()}
               diagnostics={diagnostics()}
+              lint={{
+                label: {
+                  copy: language.t("lint.action.copy"),
+                  chat: language.t("lint.action.chat"),
+                },
+                copy,
+                chat,
+              }}
               selectedLines={selectedLines()}
               jumpLines={jumpLines()}
               scrollTop={scrollTop()}

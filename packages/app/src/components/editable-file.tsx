@@ -5,6 +5,7 @@ import type { FileSearchHandle } from "@opencode-ai/ui/file"
 import { showToast } from "@opencode-ai/ui/toast"
 import { useFile, type LspDiagnostic, type LspLocation, type SelectedLineRange } from "@/context/file"
 import type { ReviewMark } from "@/context/review-state"
+import { lintDiagnostic, type LintActions } from "@/components/editable-file-lint"
 import { autocompletion, closeBrackets, closeBracketsKeymap, completionKeymap } from "@codemirror/autocomplete"
 import { defaultKeymap, history, historyKeymap } from "@codemirror/commands"
 import {
@@ -16,7 +17,7 @@ import {
   syntaxHighlighting,
 } from "@codemirror/language"
 import { Compartment, EditorState, StateField } from "@codemirror/state"
-import { lintGutter, linter, setDiagnostics, type Diagnostic as LintDiagnostic } from "@codemirror/lint"
+import { lintGutter, linter, setDiagnostics } from "@codemirror/lint"
 import { highlightSelectionMatches, searchKeymap } from "@codemirror/search"
 import { oneDark } from "@codemirror/theme-one-dark"
 import {
@@ -121,6 +122,7 @@ export interface EditableFileProps {
   jumpLines?: SelectedLineRange | null
   scrollTop?: number
   scrollLeft?: number
+  lint?: LintActions
   review?: {
     busy?: boolean
     count: number
@@ -156,32 +158,6 @@ function range(doc: EditorState["doc"], start: number, end: number) {
   const from = doc.line(Math.max(1, start)).from
   if (end >= doc.lines) return { from, to: doc.length }
   return { from, to: doc.line(end + 1).from }
-}
-
-function at(doc: EditorState["doc"], line: number, character: number) {
-  if (doc.lines === 0) return 0
-  const row = doc.line(Math.min(Math.max(1, line + 1), doc.lines))
-  return Math.min(row.to, row.from + Math.max(0, character))
-}
-
-function lint(input: EditorState["doc"], item: LspDiagnostic): LintDiagnostic {
-  const from = at(input, item.range.start.line, item.range.start.character)
-  const raw = at(input, item.range.end.line, item.range.end.character)
-  const to = raw > from ? raw : Math.min(input.length, from + 1)
-  return {
-    from,
-    to,
-    severity: severity(item.severity),
-    source: item.source,
-    message: item.message,
-  }
-}
-
-function severity(input?: number): LintDiagnostic["severity"] {
-  if (input === 1) return "error"
-  if (input === 2) return "warning"
-  if (input === 3) return "info"
-  return "hint"
 }
 
 function lineRange(doc: EditorState["doc"], input: SelectedLineRange) {
@@ -552,7 +528,11 @@ export function EditableFile(props: EditableFileProps) {
   const syncLint = () => {
     if (!view) return
     const editor = view
-    const items = reviewing() ? [] : (props.diagnostics ?? []).map((item) => lint(editor.state.doc, item))
+    const items = reviewing()
+      ? []
+      : (props.diagnostics ?? []).map((item) =>
+          lintDiagnostic(editor.state.doc, item, props.lint),
+        )
     editor.dispatch(setDiagnostics(editor.state, items))
   }
 
@@ -834,6 +814,10 @@ export function EditableFile(props: EditableFileProps) {
 
   createEffect(() => {
     props.diagnostics
+    props.lint?.copy
+    props.lint?.chat
+    props.lint?.label.copy
+    props.lint?.label.chat
     if (!view) return
     syncLint()
   })

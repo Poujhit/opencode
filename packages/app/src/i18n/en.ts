@@ -310,6 +310,14 @@ export const dict = {
   "prompt.action.send": "Send",
   "prompt.action.stop": "Stop",
 
+  "lint.action.copy": "Copy",
+  "lint.action.chat": "Add to chat",
+  "lint.toast.copy.success.title": "Diagnostic copied",
+  "lint.toast.copy.success.description": "{{where}}",
+  "lint.toast.copy.failed.title": "Failed to copy diagnostic",
+  "lint.toast.chat.success.title": "Diagnostic added to chat",
+  "lint.toast.chat.success.description": "{{where}}",
+
   "prompt.toast.pasteUnsupported.title": "Unsupported attachment",
   "prompt.toast.pasteUnsupported.description": "Only images, PDFs, or text files can be attached here.",
   "prompt.toast.modelAgentRequired.title": "Select an agent and model",

@@ -19,6 +19,7 @@ import { showToast } from "@opencode-ai/ui/toast"
 import { findLast } from "@opencode-ai/util/array"
 import { createSessionTabs, FILE_FIND_EVENT } from "@/pages/session/helpers"
 import { extractPromptFromParts } from "@/utils/prompt"
+import { writeClipboardText } from "@/utils/clipboard"
 import { UserMessage } from "@opencode-ai/sdk/v2"
 import { useSessionLayout } from "@/pages/session/session-layout"
 
@@ -150,32 +151,8 @@ export const useSessionCommands = (actions: SessionCommandContext) => {
               onSelect: async () => {
                 if (!params.id) return
 
-                const write = (value: string) => {
-                  const body = typeof document === "undefined" ? undefined : document.body
-                  if (body) {
-                    const textarea = document.createElement("textarea")
-                    textarea.value = value
-                    textarea.setAttribute("readonly", "")
-                    textarea.style.position = "fixed"
-                    textarea.style.opacity = "0"
-                    textarea.style.pointerEvents = "none"
-                    body.appendChild(textarea)
-                    textarea.select()
-                    const copied = document.execCommand("copy")
-                    body.removeChild(textarea)
-                    if (copied) return Promise.resolve(true)
-                  }
-
-                  const clipboard = typeof navigator === "undefined" ? undefined : navigator.clipboard
-                  if (!clipboard?.writeText) return Promise.resolve(false)
-                  return clipboard.writeText(value).then(
-                    () => true,
-                    () => false,
-                  )
-                }
-
                 const copy = async (url: string, existing: boolean) => {
-                  const ok = await write(url)
+                  const ok = await writeClipboardText(url)
                   if (!ok) {
                     showToast({
                       title: language.t("toast.session.share.copyFailed.title"),
