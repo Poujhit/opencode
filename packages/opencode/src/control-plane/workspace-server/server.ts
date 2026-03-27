@@ -4,7 +4,7 @@ import { InstanceBootstrap } from "../../project/bootstrap"
 import { GitRoutes } from "../../server/routes/git"
 import { SessionRoutes } from "../../server/routes/session"
 import { WorkspaceServerRoutes } from "./routes"
-import { WorkspaceContext } from "../workspace-context"
+import { WorkspaceContext } from "@/control-plane/workspace-context"
 import { WorkspaceID } from "../schema"
 import { Filesystem } from "@/util/filesystem"
 

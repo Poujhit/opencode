@@ -7,11 +7,12 @@ import { Workspace } from "./workspace"
 type Rule = { method?: string; path: string; exact?: boolean; action: "local" | "forward" }
 
 const RULES: Array<Rule> = [
+  { path: "/lsp", action: "local" },
   { path: "/session/status", action: "forward" },
   { method: "GET", path: "/session", action: "local" },
 ]
 
-function local(method: string, path: string) {
+export function local(method: string, path: string) {
   for (const rule of RULES) {
     if (rule.method && rule.method !== method) continue
     const match = rule.exact ? path === rule.path : path === rule.path || path.startsWith(rule.path + "/")

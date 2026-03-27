@@ -252,6 +252,10 @@ export namespace LSPClient {
         },
       },
       document: {
+        has(input: { path: string }) {
+          input.path = path.isAbsolute(input.path) ? input.path : path.resolve(Instance.directory, input.path)
+          return files[input.path] !== undefined
+        },
         open,
         change,
         close,

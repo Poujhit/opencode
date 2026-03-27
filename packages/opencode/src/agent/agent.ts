@@ -398,7 +398,7 @@ export namespace Agent {
     Layer.provide(Skill.defaultLayer),
   )
 
-  const { runPromise } = makeRuntime(Service, defaultLayer)
+  const { runPromise } = makeRuntime(Service, defaultLayer as Layer.Layer<Service>)
 
   export async function get(agent: string) {
     return runPromise((svc) => svc.get(agent))

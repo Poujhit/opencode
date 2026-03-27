@@ -1,4 +1,4 @@
-import { NodeFileSystem, NodePath } from "@effect/platform-node"
+// import { NodeFileSystem, NodePath } from "@effect/platform-node"
 import { Cause, Duration, Effect, Layer, Schedule, Semaphore, ServiceMap, Stream } from "effect"
 import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
 import path from "path"
@@ -453,7 +453,7 @@ export namespace Snapshot {
     Layer.provide(Config.defaultLayer),
   )
 
-  const { runPromise } = makeRuntime(Service, defaultLayer)
+  const { runPromise } = makeRuntime(Service, defaultLayer as Layer.Layer<Service>)
 
   export async function init() {
     return runPromise((svc) => svc.init())

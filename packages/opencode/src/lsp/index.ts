@@ -346,6 +346,27 @@ export namespace LSP {
     next.open = clients.length > 0
   }
 
+  async function ensureEditor(file: string) {
+    const s = await state()
+    const doc = s?.editor?.get(file)
+    const clients = await getClients(file)
+    if (!doc) return { clients, doc }
+    await Promise.all(
+      clients.map((client) => {
+        if (client.document.has({ path: file })) return Promise.resolve()
+        return client.document.open({
+          path: file,
+          content: doc.content,
+          version: doc.version,
+        })
+      }),
+    ).catch((err) => {
+      log.error("failed to ensure editor file", { err, file })
+    })
+    doc.open = clients.length > 0
+    return { clients, doc }
+  }
+
   export async function closeEditorFile(input: string) {
     const file = filepath(input)
     const s = await state()
@@ -376,7 +397,18 @@ export namespace LSP {
   }
 
   export async function editorDiagnosticsFor(input: string) {
-    return diagnosticsFor(input)
+    const file = filepath(input)
+    const { clients, doc } = await ensureEditor(file)
+    if (!doc) return []
+    await Promise.all(
+      clients.map((client) => {
+        if (client.diagnostics.has(file)) return Promise.resolve()
+        return client.waitForDiagnostics({ path: file })
+      }),
+    ).catch((err) => {
+      log.error("failed to wait for editor diagnostics", { err, file })
+    })
+    return clients.flatMap((client) => client.diagnostics.get(file) ?? [])
   }
 
   // export async function hover(input: { file: string; line: number; character: number }) {
@@ -850,12 +882,18 @@ export namespace LSP {
 
   export async function editorDefinitionFor(input: LocInput) {
     const file = filepath(input.file)
-    const doc = (await state())?.editor?.get(file)
-    if (!doc?.open) await touchFile(file)
-    return definitionFor({
-      ...input,
-      file,
-    })
+    const { clients } = await ensureEditor(file)
+    const results = await Promise.all(
+      clients.map((client) =>
+        client.connection
+          .sendRequest("textDocument/definition", {
+            textDocument: { uri: pathToFileURL(file).href },
+            position: { line: input.line, character: input.character },
+          })
+          .catch(() => null),
+      ),
+    )
+    return results.flat().filter(Boolean).flatMap(normalizeLocation)
   }
 
   export const references = async (input: LocInput) => runPromise((svc) => svc.references(input))
