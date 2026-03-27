@@ -1,8 +1,8 @@
 import { BusEvent } from "@/bus/bus-event"
 import { InstanceState } from "@/effect/instance-state"
-import { makeRunPromise } from "@/effect/run-service"
+import { makeRuntime } from "@/effect/run-service"
 import { git } from "@/util/git"
-import { Effect, Fiber, Layer, Scope, ServiceMap } from "effect"
+import { Effect, Layer, ServiceMap } from "effect"
 import { formatPatch, structuredPatch } from "diff"
 import fs from "fs"
 import fuzzysort from "fuzzysort"
@@ -857,7 +857,6 @@ export namespace File {
 
   interface State {
     cache: Entry
-    fiber: Fiber.Fiber<void> | undefined
   }
 
   export interface Interface {
@@ -882,7 +881,6 @@ export namespace File {
         Effect.fn("File.state")(() =>
           Effect.succeed({
             cache: { files: [], dirs: [] } as Entry,
-            fiber: undefined as Fiber.Fiber<void> | undefined,
           }),
         ),
       )
@@ -940,21 +938,11 @@ export namespace File {
         s.cache = next
       })
 
-      const scope = yield* Scope.Scope
+      let cachedScan = yield* Effect.cached(scan().pipe(Effect.catchCause(() => Effect.void)))
 
       const ensure = Effect.fn("File.ensure")(function* () {
-        const s = yield* InstanceState.get(state)
-        if (!s.fiber)
-          s.fiber = yield* scan().pipe(
-            Effect.catchCause(() => Effect.void),
-            Effect.ensuring(
-              Effect.sync(() => {
-                s.fiber = undefined
-              }),
-            ),
-            Effect.forkIn(scope),
-          )
-        yield* Fiber.join(s.fiber)
+        yield* cachedScan
+        cachedScan = yield* Effect.cached(scan().pipe(Effect.catchCause(() => Effect.void)))
       })
 
       const init = Effect.fn("File.init")(function* () {
@@ -1222,7 +1210,7 @@ export namespace File {
     }),
   )
 
-  const runPromise = makeRunPromise(Service, layer)
+  const { runPromise } = makeRuntime(Service, layer)
 
   export function init() {
     return runPromise((svc) => svc.init())
