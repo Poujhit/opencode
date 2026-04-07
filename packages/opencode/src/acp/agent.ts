@@ -167,7 +167,7 @@ export namespace ACP {
     private async runEventSubscription() {
       while (true) {
         if (this.eventAbort.signal.aborted) return
-        const events = await this.sdk.global.event({
+        const events = await this.sdk.global.event(undefined, {
           signal: this.eventAbort.signal,
         })
         for await (const event of events.stream) {
