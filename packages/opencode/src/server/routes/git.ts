@@ -4,7 +4,7 @@ import { describeRoute, resolver, validator } from "hono-openapi"
 import z from "zod"
 import { Git } from "../../git"
 import { lazy } from "../../util/lazy"
-import { Log } from "../../util/log"
+import { Log } from "../../util"
 
 const log = Log.create({ service: "server.git" })
 const fail = (c: Context, err: unknown) => {

@@ -2,11 +2,12 @@ import { Hono } from "hono"
 import { Instance } from "../../project/instance"
 import { InstanceBootstrap } from "../../project/bootstrap"
 import { GitRoutes } from "../../server/routes/git"
-import { SessionRoutes } from "../../server/routes/session"
+import { SessionRoutes } from "../../server/routes/instance/session"
 import { WorkspaceServerRoutes } from "./routes"
 import { WorkspaceContext } from "@/control-plane/workspace-context"
 import { WorkspaceID } from "../schema"
-import { Filesystem } from "@/util/filesystem"
+import { Filesystem } from "@/util"
+import { AppRuntime } from "@/effect/app-runtime"
 
 export namespace WorkspaceServer {
   export function App() {
@@ -35,14 +36,12 @@ export namespace WorkspaceServer {
         const directory = Filesystem.resolve(Filesystem.decodePath(raw))
 
         return WorkspaceContext.provide({
-          workspaceID: WorkspaceID.make(rawWorkspaceID),
+          workspaceID: WorkspaceID.zod.parse(rawWorkspaceID),
           async fn() {
             return Instance.provide({
               directory,
-              init: InstanceBootstrap,
-              async fn() {
-                return next()
-              },
+              init: () => AppRuntime.runPromise(InstanceBootstrap),
+              fn: () => next(),
             })
           },
         })

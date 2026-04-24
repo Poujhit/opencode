@@ -1,278 +1,53 @@
 @import "@opencode-ai/ui/styles/tailwind";
 
-/* Editable File Component */
-.editable-file {
-  display: flex;
-  flex-direction: column;
-  height: 100%;
-}
-
-.editable-file-toolbar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  padding: 4px 12px;
-  border-bottom: 1px solid var(--border-base, #333);
-  background: var(--surface-base, #1a1a1a);
-  gap: 8px;
-  position: sticky;
-  top: 0;
-  z-index: 10;
-}
-
-.editable-file-review-strip {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 12px;
-  padding: 6px 12px;
-  border-bottom: 1px solid var(--border-base, #333);
-  background: var(--surface-raised-base, #202024);
-}
-
-.editable-file-review-strip-left {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  flex-shrink: 0;
-}
-
-.editable-file-review-count {
-  font-size: 12px;
-  color: var(--text-dimmed, #888);
-}
-
-.editable-file-review-files {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  overflow-x: auto;
-  scrollbar-width: none;
-}
-
-.editable-file-review-files::-webkit-scrollbar {
-  display: none;
-}
-
-.editable-file-review-file {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  padding: 4px 10px;
-  border: 1px solid var(--border-base, #333);
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--surface-base, #18181b) 84%, transparent);
-  color: var(--text-base, #ddd);
-  font-size: 12px;
-  white-space: nowrap;
-  transition:
-    background-color 120ms ease,
-    border-color 120ms ease,
-    box-shadow 120ms ease,
-    color 120ms ease;
-}
-
-.editable-file-review-file.active {
-  background: color-mix(in oklab, var(--color-warning-500, #f59e0b) 18%, var(--surface-base, #18181b));
-  border-color: color-mix(in oklab, var(--color-warning-500, #f59e0b) 52%, var(--border-base, #333));
-  box-shadow:
-    inset 0 0 0 1px color-mix(in oklab, white 18%, transparent),
-    0 0 0 1px color-mix(in oklab, var(--color-warning-500, #f59e0b) 46%, transparent),
-    0 6px 14px color-mix(in oklab, black 30%, transparent);
-  color: var(--text-strong, #fff);
-}
-
-.editable-file-review-file.active .editable-file-review-file-badge {
-  background: color-mix(in oklab, var(--color-warning-500, #f59e0b) 55%, transparent);
-  color: var(--text-strong, #fff);
-}
-
-.editable-file-review-file-badge {
-  min-width: 18px;
-  height: 18px;
-  padding: 0 6px;
-  border-radius: 999px;
-  background: color-mix(in oklab, var(--color-warning-500, #f59e0b) 18%, transparent);
-  color: var(--text-strong, #fff);
-  font-size: 11px;
-  line-height: 18px;
-  text-align: center;
-}
-
-.editable-file-toolbar-left {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-}
-
-.editable-file-toolbar-right {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-}
-
-.editable-file-mode-label {
-  font-size: 12px;
-  font-weight: 500;
-  color: var(--text-dimmed, #888);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
-}
-
-.editable-file-find {
-  padding: 8px 12px;
-  border-bottom: 1px solid var(--border-base, #333);
-  background: color-mix(in oklab, var(--surface-raised-base, #202024) 92%, black);
-}
-
-.editable-file-find-frame {
-  display: flex;
-  align-items: stretch;
-  gap: 10px;
-  padding: 8px 10px;
-  border: 1px solid color-mix(in oklab, var(--border-base, #333) 85%, white 8%);
-  border-radius: 10px;
-  background: color-mix(in oklab, var(--surface-base, #18181b) 94%, transparent);
-  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.03);
-}
-
-.editable-file-find-main {
-  display: flex;
-  flex: 1;
-  min-width: 0;
-  flex-direction: column;
-  gap: 8px;
-}
-
-.editable-file-find-side {
-  display: flex;
-  align-items: flex-start;
-  gap: 8px;
-  flex-wrap: wrap;
-  justify-content: flex-end;
-}
-
-.editable-file-find-input {
-  width: 100%;
-  min-width: 0;
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid color-mix(in oklab, var(--border-base, #333) 88%, white 8%);
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--surface-raised-base, #202024) 86%, black);
-  color: var(--text-strong, #fff);
-  font-size: 13px;
-  outline: none;
-  transition:
-    border-color 120ms ease,
-    box-shadow 120ms ease,
-    background-color 120ms ease;
-}
-
-.editable-file-find-input::placeholder {
-  color: var(--text-dimmed, #888);
-}
-
-.editable-file-find-input:focus {
-  border-color: color-mix(in oklab, var(--color-warning-500, #f59e0b) 38%, var(--border-base, #333));
-  box-shadow: 0 0 0 1px color-mix(in oklab, var(--color-warning-500, #f59e0b) 24%, transparent);
-}
-
-.editable-file-find-input-main {
-  background: color-mix(in oklab, var(--surface-raised-base, #202024) 74%, black);
-}
-
-.editable-file-find-count {
-  min-width: 44px;
-  height: 34px;
-  padding: 0 10px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: 12px;
-  color: var(--text-dimmed, #888);
-  text-align: center;
-  border: 1px solid color-mix(in oklab, var(--border-base, #333) 88%, white 8%);
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--surface-raised-base, #202024) 78%, black);
-}
-
-.editable-file-find-btn {
-  height: 34px;
-  padding: 0 12px;
-  border: 1px solid color-mix(in oklab, var(--border-base, #333) 88%, white 8%);
-  border-radius: 8px;
-  background: color-mix(in oklab, var(--surface-raised-base, #202024) 76%, black);
-  color: var(--text-base, #ddd);
-  font-size: 12px;
-  font-weight: 500;
-  transition:
-    border-color 120ms ease,
-    background-color 120ms ease,
-    color 120ms ease;
-}
-
-.editable-file-find-btn:hover:not(:disabled) {
-  background: color-mix(in oklab, var(--surface-raised-base, #202024) 62%, white 4%);
-  border-color: color-mix(in oklab, var(--border-base, #333) 60%, white 16%);
-}
-
-.editable-file-find-btn:disabled {
-  opacity: 0.45;
-  pointer-events: none;
-}
-
-.editable-file-find-close {
-  width: 34px;
-  height: 34px;
-  border: 0;
-  border-radius: 8px;
-  background: transparent;
-  color: var(--text-dimmed, #888);
-  font-size: 24px;
-  line-height: 1;
-}
-
-.editable-file-find-close:hover {
-  background: color-mix(in oklab, var(--surface-raised-base, #202024) 64%, white 4%);
-  color: var(--text-strong, #fff);
-}
-
-@media (max-width: 900px) {
-  .editable-file-find-frame {
-    flex-direction: column;
-  }
-
-  .editable-file-find-side {
-    justify-content: flex-start;
-  }
-}
-
-
-.editable-file-editor {
-  flex: 1;
-  overflow: hidden;
-  position: relative;
-}
-
-.editable-file-editor .cm-editor {
-  height: 100%;
-  background-color: transparent !important;
-}
-
-.editable-file-editor .cm-scroller {
-  overflow: auto;
-}
-
-.editable-file-editor .cm-gutters {
-  background-color: transparent !important;
-}
-
-.editable-file-editor .cm-activeLineGutter {
-  background-color: transparent !important;
+@font-face {
+  font-family: "JetBrainsMono Nerd Font Mono";
+  src: url("/assets/JetBrainsMonoNerdFontMono-Regular.woff2") format("woff2");
+  font-weight: normal;
+  font-style: normal;
 }
 
 @layer components {
+  @keyframes session-progress-whip {
+    0% {
+      clip-path: inset(0 100% 0 0 round 999px);
+      animation-timing-function: cubic-bezier(0.2, 0.8, 0.2, 1);
+    }
+
+    48% {
+      clip-path: inset(0 0 0 0 round 999px);
+      animation-timing-function: cubic-bezier(0.65, 0, 0.35, 1);
+    }
+
+    100% {
+      clip-path: inset(0 0 0 100% round 999px);
+    }
+  }
+
+  [data-component="session-progress"] {
+    position: absolute;
+    inset: 0 0 auto;
+    height: 2px;
+    overflow: hidden;
+    pointer-events: none;
+    opacity: 1;
+    transition: opacity 220ms ease-out;
+  }
+
+  [data-component="session-progress"][data-state="hiding"] {
+    opacity: 0;
+  }
+
+  [data-component="session-progress-bar"] {
+    width: 100%;
+    height: 100%;
+    border-radius: 999px;
+    background: var(--session-progress-color);
+    clip-path: inset(0 100% 0 0 round 999px);
+    animation: session-progress-whip var(--session-progress-ms, 1800ms) infinite;
+    will-change: clip-path;
+  }
+
   [data-component="getting-started"] {
     container-type: inline-size;
     container-name: getting-started;
@@ -296,6 +71,15 @@
 
     [data-component="getting-started-actions"] > [data-component="button"] {
       width: auto;
+    }
+  }
+
+  @keyframes fade-in {
+    from {
+      opacity: 0;
+    }
+    to {
+      opacity: 1;
     }
   }
 }

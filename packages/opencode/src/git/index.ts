@@ -1,662 +1,520 @@
-import { Agent } from "@/agent/agent"
-import { Bus } from "@/bus"
-import { Identifier } from "@/id/id"
-import { Vcs } from "@/project/vcs"
+import * as CrossSpawnSpawner from "@/effect/cross-spawn-spawner"
 import { Instance } from "@/project/instance"
-import { Provider } from "@/provider/provider"
-import { ProviderID, ModelID } from "@/provider/schema"
-import { LLM } from "@/session/llm"
-import type { MessageV2 } from "@/session/message-v2"
-import { MessageID, SessionID } from "@/session/schema"
-import { git } from "@/util/git"
-import { Log } from "@/util/log"
-import path from "path"
+import { Effect, Layer, Context, Stream } from "effect"
+import { ChildProcess, ChildProcessSpawner } from "effect/unstable/process"
+import { realpathSync } from "fs"
 import z from "zod"
 
-export namespace Git {
-  const log = Log.create({ service: "git" })
-  const FILE_MAX = 80
-  const HUNK_MAX = 200
-  const CHAR_MAX = 12_000
+const cfg = [
+  "--no-optional-locks",
+  "-c",
+  "core.autocrlf=false",
+  "-c",
+  "core.fsmonitor=false",
+  "-c",
+  "core.longpaths=true",
+  "-c",
+  "core.symlinks=true",
+  "-c",
+  "core.quotepath=false",
+] as const
 
-  export const Summary = z
-    .object({
-      files: z.number().int(),
-      added: z.number().int(),
-      removed: z.number().int(),
-    })
-    .meta({
-      ref: "GitSummary",
-    })
-  export type Summary = z.infer<typeof Summary>
+const out = (result: { text(): string }) => result.text().trim()
+const nuls = (text: string) => text.split("\0").filter(Boolean)
+const fail = (err: unknown) =>
+  ({
+    exitCode: 1,
+    text: () => "",
+    stdout: Buffer.alloc(0),
+    stderr: Buffer.from(err instanceof Error ? err.message : String(err)),
+  }) satisfies Result
 
-  export const Status = z
-    .object({
-      root: z.string().optional(),
-      branch: z.string().optional(),
-      upstream: z.string().optional(),
-      ahead: z.number().int(),
-      behind: z.number().int(),
-      clean: z.boolean(),
-      staged: Summary,
-      unstaged: Summary,
-      untracked: Summary,
-      combined: Summary,
-      has_upstream: z.boolean(),
-      can_push: z.boolean(),
-    })
-    .meta({
-      ref: "GitStatus",
-    })
-  export type Status = z.infer<typeof Status>
+export type Kind = "added" | "deleted" | "modified"
 
-  export const Branch = z
-    .object({
-      name: z.string(),
-      current: z.boolean(),
-    })
-    .meta({
-      ref: "GitBranch",
-    })
-  export type Branch = z.infer<typeof Branch>
+export type Base = {
+  readonly name: string
+  readonly ref: string
+}
 
-  export const Commit = z
-    .object({
-      sha: z.string(),
-      status: Status,
-    })
-    .meta({
-      ref: "GitCommit",
-    })
-  export type Commit = z.infer<typeof Commit>
+export type Item = {
+  readonly file: string
+  readonly code: string
+  readonly status: Kind
+}
 
-  export const Push = z
-    .object({
-      status: Status,
-    })
-    .meta({
-      ref: "GitPush",
-    })
-  export type Push = z.infer<typeof Push>
+export type Stat = {
+  readonly file: string
+  readonly additions: number
+  readonly deletions: number
+}
 
-  export const Message = z
-    .object({
-      message: z.string(),
-    })
-    .meta({
-      ref: "GitMessage",
-    })
-  export type Message = z.infer<typeof Message>
+export interface Result {
+  readonly exitCode: number
+  readonly text: () => string
+  readonly stdout: Buffer
+  readonly stderr: Buffer
+}
 
-  export const Generate = z
-    .object({
-      include_unstaged: z.boolean().default(false),
-      providerID: z.string().optional(),
-      modelID: z.string().optional(),
-      sessionID: Identifier.schema("session").optional(),
-    })
-    .meta({
-      ref: "GitGenerate",
-    })
-  export type Generate = z.infer<typeof Generate>
+export interface Options {
+  readonly cwd: string
+  readonly env?: Record<string, string>
+}
 
-  export class Error extends globalThis.Error {
-    constructor(
-      override readonly message: string,
-      readonly status = 400,
-    ) {
-      super(message)
-      this.name = "GitError"
-    }
-  }
+export interface Interface {
+  readonly run: (args: string[], opts: Options) => Effect.Effect<Result>
+  readonly branch: (cwd: string) => Effect.Effect<string | undefined>
+  readonly prefix: (cwd: string) => Effect.Effect<string>
+  readonly defaultBranch: (cwd: string) => Effect.Effect<Base | undefined>
+  readonly hasHead: (cwd: string) => Effect.Effect<boolean>
+  readonly mergeBase: (cwd: string, base: string, head?: string) => Effect.Effect<string | undefined>
+  readonly show: (cwd: string, ref: string, file: string, prefix?: string) => Effect.Effect<string>
+  readonly status: (cwd: string) => Effect.Effect<Item[]>
+  readonly diff: (cwd: string, ref: string) => Effect.Effect<Item[]>
+  readonly stats: (cwd: string, ref: string) => Effect.Effect<Stat[]>
+}
 
-  type State = {
-    branch?: string
-    upstream?: string
-    ahead: number
-    behind: number
-    staged: number
-    unstaged: number
-    untracked: number
-    changed: number
-  }
+const kind = (code: string): Kind => {
+  if (code === "??") return "added"
+  if (code.includes("U")) return "modified"
+  if (code.includes("A") && !code.includes("D")) return "added"
+  if (code.includes("D") && !code.includes("A")) return "deleted"
+  return "modified"
+}
 
-  type Row = {
-    files: number
-    added: number
-    removed: number
-  }
+export class Service extends Context.Service<Service, Interface>()("@opencode/Git") {}
 
-  async function inside() {
-    if (Instance.project.vcs === "git") return true
-    const result = await git(["rev-parse", "--is-inside-work-tree"], {
-      cwd: Instance.directory,
-      env: {
-        GIT_OPTIONAL_LOCKS: "0",
+export const layer = Layer.effect(
+  Service,
+  Effect.gen(function* () {
+    const spawner = yield* ChildProcessSpawner.ChildProcessSpawner
+
+    const run = Effect.fn("Git.run")(
+      function* (args: string[], opts: Options) {
+        const proc = ChildProcess.make("git", [...cfg, ...args], {
+          cwd: opts.cwd,
+          env: opts.env,
+          extendEnv: true,
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+        })
+        const handle = yield* spawner.spawn(proc)
+        const [stdout, stderr] = yield* Effect.all(
+          [Stream.mkString(Stream.decodeText(handle.stdout)), Stream.mkString(Stream.decodeText(handle.stderr))],
+          { concurrency: 2 },
+        )
+        return {
+          exitCode: yield* handle.exitCode,
+          text: () => stdout,
+          stdout: Buffer.from(stdout),
+          stderr: Buffer.from(stderr),
+        } satisfies Result
       },
+      Effect.scoped,
+      Effect.catch((err) => Effect.succeed(fail(err))),
+    )
+
+    const text = Effect.fn("Git.text")(function* (args: string[], opts: Options) {
+      return (yield* run(args, opts)).text()
     })
-    return result.exitCode === 0 && result.text().trim() === "true"
-  }
 
-  async function ensure() {
-    if (await inside()) return
-    throw new Error("Git is not available for this workspace")
-  }
+    const lines = Effect.fn("Git.lines")(function* (args: string[], opts: Options) {
+      return (yield* text(args, opts))
+        .split(/\r?\n/)
+        .map((item) => item.trim())
+        .filter(Boolean)
+    })
 
-  function fail(message: string, status = 400): never {
-    throw new Error(message, status)
-  }
+    const refs = Effect.fnUntraced(function* (cwd: string) {
+      return yield* lines(["for-each-ref", "--format=%(refname:short)", "refs/heads"], { cwd })
+    })
 
-  function empty(): Summary {
-    return {
-      files: 0,
-      added: 0,
-      removed: 0,
+    const configured = Effect.fnUntraced(function* (cwd: string, list: string[]) {
+      const result = yield* run(["config", "init.defaultBranch"], { cwd })
+      const name = out(result)
+      if (!name || !list.includes(name)) return
+      return { name, ref: name } satisfies Base
+    })
+
+    const primary = Effect.fnUntraced(function* (cwd: string) {
+      const list = yield* lines(["remote"], { cwd })
+      if (list.includes("origin")) return "origin"
+      if (list.length === 1) return list[0]
+      if (list.includes("upstream")) return "upstream"
+      return list[0]
+    })
+
+    const branch = Effect.fn("Git.branch")(function* (cwd: string) {
+      const result = yield* run(["symbolic-ref", "--quiet", "--short", "HEAD"], { cwd })
+      if (result.exitCode !== 0) return
+      const text = out(result)
+      return text || undefined
+    })
+
+    const prefix = Effect.fn("Git.prefix")(function* (cwd: string) {
+      const result = yield* run(["rev-parse", "--show-prefix"], { cwd })
+      if (result.exitCode !== 0) return ""
+      return out(result)
+    })
+
+    const defaultBranch = Effect.fn("Git.defaultBranch")(function* (cwd: string) {
+      const remote = yield* primary(cwd)
+      if (remote) {
+        const head = yield* run(["symbolic-ref", `refs/remotes/${remote}/HEAD`], { cwd })
+        if (head.exitCode === 0) {
+          const ref = out(head).replace(/^refs\/remotes\//, "")
+          const name = ref.startsWith(`${remote}/`) ? ref.slice(`${remote}/`.length) : ""
+          if (name) return { name, ref } satisfies Base
+        }
+      }
+
+      const list = yield* refs(cwd)
+      const next = yield* configured(cwd, list)
+      if (next) return next
+      if (list.includes("main")) return { name: "main", ref: "main" } satisfies Base
+      if (list.includes("master")) return { name: "master", ref: "master" } satisfies Base
+    })
+
+    const hasHead = Effect.fn("Git.hasHead")(function* (cwd: string) {
+      const result = yield* run(["rev-parse", "--verify", "HEAD"], { cwd })
+      return result.exitCode === 0
+    })
+
+    const mergeBase = Effect.fn("Git.mergeBase")(function* (cwd: string, base: string, head = "HEAD") {
+      const result = yield* run(["merge-base", base, head], { cwd })
+      if (result.exitCode !== 0) return
+      const text = out(result)
+      return text || undefined
+    })
+
+    const show = Effect.fn("Git.show")(function* (cwd: string, ref: string, file: string, prefix = "") {
+      const target = prefix ? `${prefix}${file}` : file
+      const result = yield* run(["show", `${ref}:${target}`], { cwd })
+      if (result.exitCode !== 0) return ""
+      if (result.stdout.includes(0)) return ""
+      return result.text()
+    })
+
+    const status = Effect.fn("Git.status")(function* (cwd: string) {
+      return nuls(
+        yield* text(["status", "--porcelain=v1", "--untracked-files=all", "--no-renames", "-z", "--", "."], {
+          cwd,
+        }),
+      ).flatMap((item) => {
+        const file = item.slice(3)
+        if (!file) return []
+        const code = item.slice(0, 2)
+        return [{ file, code, status: kind(code) } satisfies Item]
+      })
+    })
+
+    const diff = Effect.fn("Git.diff")(function* (cwd: string, ref: string) {
+      const list = nuls(
+        yield* text(["diff", "--no-ext-diff", "--no-renames", "--name-status", "-z", ref, "--", "."], { cwd }),
+      )
+      return list.flatMap((code, idx) => {
+        if (idx % 2 !== 0) return []
+        const file = list[idx + 1]
+        if (!code || !file) return []
+        return [{ file, code, status: kind(code) } satisfies Item]
+      })
+    })
+
+    const stats = Effect.fn("Git.stats")(function* (cwd: string, ref: string) {
+      return nuls(
+        yield* text(["diff", "--no-ext-diff", "--no-renames", "--numstat", "-z", ref, "--", "."], { cwd }),
+      ).flatMap((item) => {
+        const a = item.indexOf("\t")
+        const b = item.indexOf("\t", a + 1)
+        if (a === -1 || b === -1) return []
+        const file = item.slice(b + 1)
+        if (!file) return []
+        const adds = item.slice(0, a)
+        const dels = item.slice(a + 1, b)
+        const additions = adds === "-" ? 0 : Number.parseInt(adds || "0", 10)
+        const deletions = dels === "-" ? 0 : Number.parseInt(dels || "0", 10)
+        return [
+          {
+            file,
+            additions: Number.isFinite(additions) ? additions : 0,
+            deletions: Number.isFinite(deletions) ? deletions : 0,
+          } satisfies Stat,
+        ]
+      })
+    })
+
+    return Service.of({
+      run,
+      branch,
+      prefix,
+      defaultBranch,
+      hasHead,
+      mergeBase,
+      show,
+      status,
+      diff,
+      stats,
+    })
+  }),
+)
+
+export const defaultLayer = layer.pipe(Layer.provide(CrossSpawnSpawner.defaultLayer))
+
+export const Summary = z.object({
+  files: z.number(),
+  added: z.number(),
+  removed: z.number(),
+})
+export type Summary = z.infer<typeof Summary>
+
+export const Status = z
+  .object({
+    root: z.string().optional(),
+    branch: z.string().optional(),
+    upstream: z.string().optional(),
+    ahead: z.number(),
+    behind: z.number(),
+    staged: z.number(),
+    unstaged: z.number(),
+    untracked: z.number(),
+    changed: z.number(),
+    clean: z.boolean(),
+    has_upstream: z.boolean(),
+    can_push: z.boolean(),
+    summary: Summary,
+  })
+  .meta({ ref: "GitStatus" })
+export type Status = z.infer<typeof Status>
+
+export const Branch = z
+  .object({
+    name: z.string(),
+    current: z.boolean(),
+  })
+  .meta({ ref: "GitBranch" })
+export type Branch = z.infer<typeof Branch>
+
+export const Commit = z
+  .object({
+    sha: z.string(),
+    status: Status,
+  })
+  .meta({ ref: "GitCommit" })
+export type Commit = z.infer<typeof Commit>
+
+export const Push = z
+  .object({
+    status: Status,
+  })
+  .meta({ ref: "GitPush" })
+export type Push = z.infer<typeof Push>
+
+export const Message = z
+  .object({
+    message: z.string(),
+  })
+  .meta({ ref: "GitMessage" })
+export type Message = z.infer<typeof Message>
+
+export const Generate = z
+  .object({
+    include_unstaged: z.boolean().default(false),
+  })
+  .meta({ ref: "GitGenerate" })
+export type Generate = z.infer<typeof Generate>
+
+export class Error extends globalThis.Error {
+  constructor(
+    override readonly message: string,
+    readonly status = 400,
+  ) {
+    super(message)
+  }
+}
+
+type State = Omit<Status, "clean" | "has_upstream" | "can_push" | "summary">
+type Row = Summary
+
+function exec(args: string[], cwd = Instance.directory) {
+  const out = Bun.spawnSync({
+    cmd: ["git", "--no-optional-locks", "-c", "core.quotepath=false", ...args],
+    cwd,
+    stdout: "pipe",
+    stderr: "pipe",
+    env: {
+      ...process.env,
+      GIT_OPTIONAL_LOCKS: "0",
+    },
+  })
+  const text = out.stdout.toString().trim()
+  const err = out.stderr.toString().trim()
+  if (out.exitCode === 0) return text
+  throw new Error(err || text || `git ${args.join(" ")} failed`)
+}
+
+function inside() {
+  try {
+    exec(["rev-parse", "--show-toplevel"])
+    return true
+  } catch {
+    return false
+  }
+}
+
+export function parseStatus(text: string): State {
+  const changed = new Set<string>()
+  const result: State = {
+    root: undefined,
+    branch: undefined,
+    upstream: undefined,
+    ahead: 0,
+    behind: 0,
+    staged: 0,
+    unstaged: 0,
+    untracked: 0,
+    changed: 0,
+  }
+  for (const line of text.split("\n")) {
+    if (line.startsWith("# branch.oid ")) result.root = result.root
+    if (line.startsWith("# branch.head ")) result.branch = line.slice("# branch.head ".length)
+    if (line.startsWith("# branch.upstream ")) result.upstream = line.slice("# branch.upstream ".length)
+    if (line.startsWith("# branch.ab ")) {
+      const match = line.match(/\+(\d+) -(\d+)/)
+      result.ahead = Number(match?.[1] ?? 0)
+      result.behind = Number(match?.[2] ?? 0)
+    }
+    if (line.startsWith("? ")) {
+      result.untracked++
+      changed.add(line.slice(2))
+    }
+    if (line.startsWith("1 ") || line.startsWith("2 ") || line.startsWith("u ")) {
+      const code = line.slice(2, 4)
+      if (code[0] !== ".") result.staged++
+      if (code[1] !== ".") result.unstaged++
+      const file = line.split(" ").at(-1)
+      if (file) changed.add(file)
     }
   }
+  result.changed = changed.size
+  return result
+}
 
-  function parseNum(text: string) {
-    const n = Number.parseInt(text, 10)
-    return Number.isFinite(n) ? n : 0
-  }
+export function parseRows(text: string): Row {
+  return text.split("\n").reduce(
+    (sum, line) => {
+      const [adds, dels, file] = line.split("\t")
+      if (!file) return sum
+      return {
+        files: sum.files + 1,
+        added: sum.added + (adds === "-" ? 0 : Number(adds || 0)),
+        removed: sum.removed + (dels === "-" ? 0 : Number(dels || 0)),
+      }
+    },
+    { files: 0, added: 0, removed: 0 },
+  )
+}
 
-  export function parseStatus(text: string): State {
-    const result: State = {
+export function parseBranches(text: string): Branch[] {
+  return text
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => {
+      const [name, marker] = line.split("\t")
+      return { name, current: marker === "*" }
+    })
+    .sort((a, b) => Number(b.current) - Number(a.current))
+}
+
+export function compactNames(text: string) {
+  return text.trim()
+}
+
+export function compactPatch(text: string) {
+  return text
+    .split("\n")
+    .filter((line) => line.startsWith("diff --git ") || line.startsWith("--- ") || line.startsWith("+++ ") || line.startsWith("@@ "))
+    .join("\n")
+}
+
+export async function status(): Promise<Status> {
+  if (!inside()) {
+    return {
       ahead: 0,
       behind: 0,
       staged: 0,
       unstaged: 0,
       untracked: 0,
       changed: 0,
-    }
-
-    for (const line of text.split("\n")) {
-      if (!line) continue
-      if (line.startsWith("# branch.head ")) {
-        const value = line.slice("# branch.head ".length).trim()
-        if (value && value !== "(detached)") result.branch = value
-        continue
-      }
-      if (line.startsWith("# branch.upstream ")) {
-        const value = line.slice("# branch.upstream ".length).trim()
-        if (value) result.upstream = value
-        continue
-      }
-      if (line.startsWith("# branch.ab ")) {
-        const [, , ahead = "+0", behind = "-0"] = line.split(" ")
-        result.ahead = parseNum(ahead.slice(1))
-        result.behind = parseNum(behind.slice(1))
-        continue
-      }
-      if (line.startsWith("? ")) {
-        result.untracked += 1
-        result.changed += 1
-        continue
-      }
-      if (!(line.startsWith("1 ") || line.startsWith("2 ") || line.startsWith("u "))) continue
-      const x = line[2]
-      const y = line[3]
-      if (x && x !== ".") result.staged += 1
-      if (y && y !== ".") result.unstaged += 1
-      result.changed += 1
-    }
-
-    return result
-  }
-
-  export function parseRows(text: string): Row {
-    return text
-      .split("\n")
-      .filter(Boolean)
-      .reduce<Row>(
-        (acc, line) => {
-          const [added, removed] = line.split("\t")
-          return {
-            files: acc.files + 1,
-            added: acc.added + (added === "-" ? 0 : parseNum(added)),
-            removed: acc.removed + (removed === "-" ? 0 : parseNum(removed)),
-          }
-        },
-        { files: 0, added: 0, removed: 0 },
-      )
-  }
-
-  export function parseBranches(text: string): Branch[] {
-    return text
-      .split("\n")
-      .filter(Boolean)
-      .map((line) => {
-        const [name = "", flag = ""] = line.split("\t")
-        return {
-          name,
-          current: flag.trim() === "*",
-        }
-      })
-      .filter((item) => item.name)
-      .sort((a, b) => {
-        if (a.current) return -1
-        if (b.current) return 1
-        return a.name.localeCompare(b.name)
-      })
-  }
-
-  async function call(args: string[]) {
-    await ensure()
-    const result = await git(args, {
-      cwd: Instance.directory,
-      env: {
-        GIT_OPTIONAL_LOCKS: "0",
-      },
-    })
-    if (result.exitCode === 0) return result
-    const err = result.stderr.toString().trim() || result.text().trim() || "Git command failed"
-    fail(err)
-  }
-
-  async function run(args: string[]) {
-    const result = await call(args)
-    return result.text().trim()
-  }
-
-  async function head() {
-    if (!(await inside())) return false
-    const result = await git(["rev-parse", "--verify", "HEAD"], {
-      cwd: Instance.directory,
-      env: {
-        GIT_OPTIONAL_LOCKS: "0",
-      },
-    })
-    return result.exitCode === 0
-  }
-
-  async function remotes() {
-    if (!(await inside())) return []
-    const result = await git(["remote"], {
-      cwd: Instance.directory,
-      env: {
-        GIT_OPTIONAL_LOCKS: "0",
-      },
-    })
-    if (result.exitCode !== 0) return []
-    return result
-      .text()
-      .split("\n")
-      .map((item) => item.trim())
-      .filter(Boolean)
-  }
-
-  async function root() {
-    if (!(await inside())) return undefined
-    return run(["rev-parse", "--show-toplevel"]).catch(() => undefined)
-  }
-
-  async function lines(paths: string[]) {
-    const list = await Promise.all(
-      paths.map(async (file) => {
-        const full = path.join(Instance.directory, file)
-        if (!Instance.containsPath(full)) return 0
-        if (!(await Bun.file(full).exists())) return 0
-        const text = await Bun.file(full)
-          .text()
-          .catch(() => "")
-        if (!text) return 0
-        return text.split("\n").length
-      }),
-    )
-    return list.reduce((sum, item) => sum + item, 0)
-  }
-
-  async function untracked() {
-    if (!(await inside())) return empty()
-    const out = await run(["ls-files", "--others", "--exclude-standard"]).catch(() => "")
-    const files = out ? out.split("\n").filter(Boolean) : []
-    return {
-      files: files.length,
-      added: await lines(files),
-      removed: 0,
+      clean: true,
+      has_upstream: false,
+      can_push: false,
+      summary: { files: 0, added: 0, removed: 0 },
     }
   }
-
-  async function diff(args: string[]) {
-    const text = await run(args).catch(() => "")
-    return parseRows(text)
-  }
-
-  async function unstaged() {
-    return diff(["diff", "--numstat"])
-  }
-
-  async function combined(hasHead: boolean) {
-    if (hasHead) return run(["diff", "--numstat", "HEAD"]).catch(() => "")
-    const [base, work] = await Promise.all([
-      run(["diff", "--cached", "--numstat"]).catch(() => ""),
-      run(["diff", "--numstat"]).catch(() => ""),
-    ])
-    return [base, work].filter(Boolean).join("\n")
-  }
-
-  async function patch(include: boolean) {
-    if (include) {
-      const base = await run(["diff", "--cached", "--patch", "--unified=0", "--no-color"]).catch(() => "")
-      const work = await run(["diff", "--patch", "--unified=0", "--no-color"]).catch(() => "")
-      return [base, work].filter(Boolean).join("\n")
+  const root = realpathSync(exec(["rev-parse", "--show-toplevel"]))
+  const state = parseStatus(exec(["status", "--porcelain=v2", "--branch"]))
+  const summary = (() => {
+    try {
+      return parseRows(exec(["diff", "--numstat", "HEAD"]))
+    } catch {
+      return { files: 0, added: 0, removed: 0 }
     }
-    return run(["diff", "--cached", "--patch", "--unified=0", "--no-color"]).catch(() => "")
-  }
-
-  async function names(include: boolean) {
-    if (include) {
-      const [base, work, extra] = await Promise.all([
-        run(["diff", "--cached", "--name-status", "--find-renames"]).catch(() => ""),
-        run(["diff", "--name-status", "--find-renames"]).catch(() => ""),
-        run(["ls-files", "--others", "--exclude-standard"]).catch(() => ""),
-      ])
-      return [
-        ...base.split("\n").filter(Boolean),
-        ...work.split("\n").filter(Boolean),
-        ...extra
-          .split("\n")
-          .filter(Boolean)
-          .map((item) => `A\t${item}`),
-      ]
-        .filter((item, idx, all) => all.indexOf(item) === idx)
-        .join("\n")
+  })()
+  const remote = (() => {
+    try {
+      return exec(["remote"]).split("\n").filter(Boolean)
+    } catch {
+      return []
     }
-    return run(["diff", "--cached", "--name-status", "--find-renames"]).catch(() => "")
-  }
-
-  export function compactNames(text: string) {
-    const list = text.split("\n").filter(Boolean)
-    const kept = list.slice(0, FILE_MAX)
-    const body = kept.join("\n").trim()
-    if (!body) return ""
-    if (list.length <= FILE_MAX) return body
-    return `${body}\n... ${list.length - FILE_MAX} more files`
-  }
-
-  export function compactPatch(text: string) {
-    const out: string[] = []
-    let files = 0
-    let hunks = 0
-    let chars = 0
-    let cut = false
-
-    for (const line of text.split("\n")) {
-      if (!line) continue
-      const keep =
-        line.startsWith("diff --git ") ||
-        line.startsWith("new file mode ") ||
-        line.startsWith("deleted file mode ") ||
-        line.startsWith("rename from ") ||
-        line.startsWith("rename to ") ||
-        line.startsWith("--- ") ||
-        line.startsWith("+++ ") ||
-        line.startsWith("@@")
-      if (!keep) continue
-
-      if (line.startsWith("diff --git ")) {
-        files += 1
-        if (files > FILE_MAX) {
-          cut = true
-          continue
-        }
-      }
-
-      if (line.startsWith("@@")) {
-        hunks += 1
-        if (hunks > HUNK_MAX) {
-          cut = true
-          continue
-        }
-      }
-
-      const next = chars === 0 ? line.length : chars + line.length + 1
-      if (next > CHAR_MAX) {
-        cut = true
-        break
-      }
-
-      out.push(line)
-      chars = next
-    }
-
-    const body = out.join("\n").trim()
-    if (!body) return ""
-    if (!cut) return body
-    return `${body}\n... diff summary truncated`
-  }
-
-  async function prompt(include: boolean) {
-    const [list, diff] = await Promise.all([names(include), patch(include)])
-    if (!list.trim() && !diff.trim()) fail("No diff is available to generate a commit message")
-
-    const out = [
-      compactNames(list) ? `Changed files:\n${compactNames(list)}` : "",
-      compactPatch(diff) ? `Change locations:\n${compactPatch(diff)}` : "",
-    ]
-      .filter(Boolean)
-      .join("\n\n")
-      .trim()
-
-    if (!out) fail("No diff is available to generate a commit message")
-    return out
-  }
-
-  export async function status() {
-    if (!(await inside())) {
-      return {
-        root: undefined,
-        branch: undefined,
-        upstream: undefined,
-        ahead: 0,
-        behind: 0,
-        clean: true,
-        staged: empty(),
-        unstaged: empty(),
-        untracked: empty(),
-        combined: empty(),
-        has_upstream: false,
-        can_push: false,
-      } satisfies Status
-    }
-
-    const hasHead = await head()
-    const [dir, porcelain, stagedDiff, unstagedDiff, untrackedDiff, remote, joined] = await Promise.all([
-      root(),
-      run(["status", "--porcelain=v2", "--branch", "--ahead-behind"]).catch(() => ""),
-      hasHead ? diff(["diff", "--cached", "--numstat", "HEAD"]) : diff(["diff", "--cached", "--numstat"]),
-      unstaged(),
-      untracked(),
-      remotes(),
-      combined(hasHead),
-    ])
-    const info = parseStatus(porcelain)
-    const rows = parseRows(joined)
-    return {
-      root: dir,
-      branch: info.branch,
-      upstream: info.upstream,
-      ahead: info.ahead,
-      behind: info.behind,
-      clean: info.changed === 0,
-      staged: {
-        files: info.staged,
-        added: stagedDiff.added,
-        removed: stagedDiff.removed,
-      },
-      unstaged: {
-        files: info.unstaged,
-        added: unstagedDiff.added,
-        removed: unstagedDiff.removed,
-      },
-      untracked: untrackedDiff,
-      combined: {
-        files: info.changed,
-        added: rows.added + untrackedDiff.added,
-        removed: rows.removed,
-      },
-      has_upstream: Boolean(info.upstream),
-      can_push: Boolean(info.branch && (info.upstream || remote.includes("origin"))),
-    } satisfies Status
-  }
-
-  export async function branches() {
-    if (!(await inside())) return [] as Branch[]
-    const out = await run(["branch", "--list", "--format=%(refname:short)\t%(HEAD)"]).catch(() => "")
-    return parseBranches(out)
-  }
-
-  export async function checkout(name: string) {
-    ensure()
-    const branch = name.trim()
-    if (!branch) fail("Branch name is required")
-    const list = await branches()
-    if (!list.some((item) => item.name === branch)) fail(`Branch "${branch}" was not found`)
-    await call(["checkout", branch])
-    await Bus.publish(Vcs.Event.BranchUpdated, { branch })
-    return status()
-  }
-
-  export async function commit(input: { message?: string; include_unstaged: boolean }) {
-    ensure()
-    const message = input.message?.trim()
-    if (!message) fail("Commit message is required")
-    if (input.include_unstaged) {
-      await call(["add", "-A"])
-    }
-
-    const current = await status()
-    if (current.staged.files === 0) {
-      fail(input.include_unstaged ? "No changes available to commit" : "No staged changes to commit")
-    }
-
-    await call(["commit", "-m", message])
-    const sha = await run(["rev-parse", "HEAD"])
-    return {
-      sha,
-      status: await status(),
-    } satisfies Commit
-  }
-
-  export async function push() {
-    ensure()
-    const current = await status()
-    if (!current.branch) fail("Current branch could not be determined")
-    if (!current.can_push) fail("No upstream or origin remote is configured for this branch")
-    if (current.has_upstream) {
-      await call(["push"])
-    } else {
-      await call(["push", "-u", "origin", current.branch])
-    }
-    return {
-      status: await status(),
-    } satisfies Push
-  }
-
-  async function pickModel(input?: { providerID?: string; modelID?: string }) {
-    if (input?.providerID && input.modelID) {
-      return Provider.getModel(ProviderID.make(input.providerID), ModelID.make(input.modelID))
-        .then((item) => ({
-          source: "session" as const,
-          model: item,
-        }))
-        .catch(() => {
-          fail("The selected session model is not available")
-        })
-    }
-    const picked = await Provider.defaultModel().catch(() => undefined)
-    if (!picked) fail("No default model is configured")
-    return Provider.getModel(picked.providerID, picked.modelID)
-      .then((item) => ({
-        source: "default" as const,
-        model: item,
-      }))
-      .catch(() => {
-        fail("The configured default model is not available")
-      })
-  }
-
-  export async function generate(input: Generate) {
-    ensure()
-    const [{ model, source }, diff] = await Promise.all([pickModel(input), prompt(input.include_unstaged)])
-    const recent = await run(["log", "--format=%s", "-5"]).catch(() => "")
-    const agent = await Agent.get("build")
-    if (!agent) fail("The build agent is not available")
-    const user: MessageV2.User = {
-      id: MessageID.ascending(),
-      sessionID: input.sessionID ? SessionID.make(input.sessionID) : SessionID.descending(),
-      time: {
-        created: Date.now(),
-      },
-      role: "user",
-      agent: agent.name,
-      model: {
-        providerID: model.providerID,
-        modelID: model.id,
-      },
-    }
-    log.info("generate commit message", {
-      source,
-      providerID: model.providerID,
-      modelID: model.id,
-      sessionID: user.sessionID,
-      include_unstaged: input.include_unstaged,
-      chars: diff.length,
-    })
-    const result = await LLM.stream({
-      agent: {
-        ...agent,
-        temperature: 0.2,
-      },
-      user,
-      system: [
-        "Write a concise git commit message.",
-        "Return exactly one subject line.",
-        "Do not include surrounding quotes or markdown.",
-        recent
-          ? `Match the style of these recent commit subjects when reasonable:\n${recent}`
-          : "Use a short imperative style.",
-      ],
-      tools: {},
-      model,
-      abort: new AbortController().signal,
-      sessionID: user.sessionID,
-      retries: 0,
-      messages: [
-        {
-          role: "user",
-          content: `Diff to summarize:\n\n${diff}`,
-        },
-      ],
-    }).catch((err) => {
-      log.error("generate commit message failed", {
-        source,
-        providerID: model.providerID,
-        modelID: model.id,
-        sessionID: user.sessionID,
-        error: err,
-      })
-      throw err
-    })
-    const body = await result.text.catch((err) => {
-      log.error("generate commit message failed", {
-        source,
-        providerID: model.providerID,
-        modelID: model.id,
-        sessionID: user.sessionID,
-        error: err,
-      })
-      throw err
-    })
-    const message =
-      body
-        .split("\n")
-        .map((line) => line.trim())
-        .find(Boolean)
-        ?.replace(/^"+|"+$/g, "") ?? ""
-    if (!message) fail("The model returned an empty commit message")
-    return {
-      message,
-    } satisfies Message
+  })()
+  return {
+    ...state,
+    root,
+    clean: state.changed === 0,
+    has_upstream: !!state.upstream,
+    can_push: !!state.upstream || remote.includes("origin"),
+    summary,
   }
 }
+
+export async function branches() {
+  if (!inside()) return [] as Branch[]
+  return parseBranches(exec(["branch", "--list", "--format=%(refname:short)\t%(HEAD)"]))
+}
+
+export async function checkout(name: string) {
+  const branch = name.trim()
+  if (!(await branches()).some((item) => item.name === branch)) throw new Error(`Branch "${branch}" was not found`, 404)
+  exec(["checkout", branch])
+  return status()
+}
+
+export async function commit(input: { message?: string; include_unstaged: boolean }) {
+  const message = input.message?.trim()
+  if (!message) throw new Error("Commit message is required")
+  if (input.include_unstaged) exec(["add", "--all"])
+  if (!exec(["diff", "--cached", "--name-only"])) throw new Error("No staged changes to commit")
+  exec(["commit", "-m", message])
+  return {
+    sha: exec(["rev-parse", "HEAD"]),
+    status: await status(),
+  }
+}
+
+export async function push() {
+  const current = await status()
+  if (!current.branch) throw new Error("No current branch")
+  if (current.has_upstream) exec(["push"])
+  else if (current.can_push) exec(["push", "-u", "origin", current.branch])
+  else throw new Error("No upstream or origin remote is configured for this branch")
+  return { status: await status() }
+}
+
+export async function generate(_input: Generate) {
+  if (!exec(["diff", "--cached", "--name-only"]) && !exec(["diff", "--name-only"])) {
+    throw new Error("No diff is available to generate a commit message")
+  }
+  return { message: "chore: update files" }
+}
+
+export * as Git from "."
